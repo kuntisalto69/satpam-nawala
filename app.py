@@ -107,34 +107,52 @@ def chunk_list(lst, n):
 # --- MESIN PLAYWRIGHT ---
 def run_playwright_check():
     global log_buffer
-    log_buffer = "" # Reset log setiap kali dipanggil
+    log_buffer = "" 
     log("SYSTEM", "Membuka Nawala Checker (Source: nawala.in)")
     
-    user_data = os.path.join(os.getcwd(), "nawala_session")
     REAL_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     global_report, ada_perubahan = [], False
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch_persistent_context(
-                user_data_dir=user_data, 
-                headless=IS_HEADLESS, 
-                user_agent=REAL_USER_AGENT, 
-                args=["--disable-notifications", "--disable-dev-shm-usage", "--no-sandbox"], 
-                viewport={"width": 750, "height": 750}
+            # GUNAKAN LAUNCH BIASA (BUKAN PERSISTENT) AGAR LEBIH RINGAN DI RENDER
+            browser = p.chromium.launch(
+                headless=True, 
+                args=[
+                    "--no-sandbox", 
+                    "--disable-setuid-sandbox", 
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled" # <--- KUNCI PENYAMARAN
+                ]
             )
-            page = browser.pages[0] if browser.pages else browser.new_page()
+            
+            # BUAT CONTEXT DENGAN USER AGENT ASLI LAPTOP
+            context = browser.new_context(
+                user_agent=REAL_USER_AGENT,
+                viewport={"width": 1280, "height": 720}
+            )
+            
+            page = context.new_page()
+
+            # HAPUS JEJAK WEBDRIVER (Biar gak ketahuan robot)
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             try:
-                response = page.goto("https://nawala.in/", timeout=30000, wait_until="commit")
+                # Tambahkan extra header agar disangka browser asli
+                page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+                
+                # Gunakan wait_until="networkidle" agar lebih stabil
+                response = page.goto("https://nawala.in/", timeout=45000, wait_until="networkidle")
+                
                 if response and response.status >= 500:
                     log("ERROR", f"Server nawala.in DOWN (Error {response.status}).")
                     browser.close()
                     return log_buffer
-                page.wait_for_selector("textarea", timeout=15000)
-            except Exception:
-                log("ERROR", "Waktu habis / Gagal memuat nawala.in.")
+                
+                page.wait_for_selector("textarea", timeout=20000)
+            except Exception as e:
+                log("ERROR", f"Waktu habis / Gagal memuat nawala.in: {str(e)}")
                 browser.close()
                 return log_buffer
 
