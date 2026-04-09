@@ -178,14 +178,15 @@ def run_api_check():
 # --- ENDPOINT API ---
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
-    # Jalankan di Background agar Cron-Job tidak Timeout
-    thread = threading.Thread(target=run_api_check)
-    thread.start()
-    return Response("<h3 style='color:green; font-family:monospace;'>🚀 Patroli API Nawala sedang berjalan di latar belakang... Cek log server/Telegram!</h3>", mimetype='text/html', status=200)
+    # Jalankan langsung (tanpa background) karena API sudah super cepat!
+    hasil_log = run_api_check()
+    
+    # Tampilkan log ala Hacker langsung di layar browser Bosku
+    return Response(f"<pre style='background:#1e1e1e; color:#00ff00; padding:20px; font-family:monospace; font-size:14px; white-space:pre-wrap;'>{hasil_log}</pre>", mimetype='text/html')
 
 @app.route('/')
 def home():
-    return "Satpam Nawala (Versi API) Aktif! Akses /jalankan-patroli"
+    return "Satpam Nawala (Versi API VVIP) Aktif! Akses /jalankan-patroli"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
