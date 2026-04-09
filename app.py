@@ -170,12 +170,32 @@ def run_api_check():
     return log_buffer
 
 # --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
+# Simpan waktu terakhir jalan di memori (biar gak jebol kuota)
+LAST_RUN_TIME = None
+
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
+    global LAST_RUN_TIME
+    sekarang = datetime.now()
+
+    # REM DARURAT: Jika dipanggil lagi dalam waktu kurang dari 5 menit, TOLAK!
+    if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 300:
+        return Response(f"""
+        <html>
+            <head><meta http-equiv="refresh" content="300"></head>
+            <body style="background:#1e1e1e; color:#ff9900; font-family:monospace; padding:20px;">
+                ⚠️ SISTEM PENDING: Menghindari spam kuota. <br>
+                Patroli terakhir baru saja selesai. Tunggu jadwal berikutnya (30 Menit).
+                <br><br>
+                <a href="/jalankan-patroli" style="color:#00ff00;">Paksa Cek Sekarang (Gunakan Hati-hati)</a>
+            </body>
+        </html>
+        """, mimetype='text/html')
+
+    # Jika aman, jalankan patroli
+    LAST_RUN_TIME sekarang
     hasil_log = run_api_check()
     
-    # Menambahkan Auto-Refresh setiap 1800 detik (30 Menit)
-    # Supaya server nggak tidur dan browser terus update otomatis
     return Response(f"""
     <html>
         <head>
