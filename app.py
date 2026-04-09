@@ -226,12 +226,28 @@ def run_playwright_check():
             if ada_perubahan:
                 log("INFO", "Mengirim laporan Telegram...")
                 waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
-                msg = f"📅 Waktu: {waktu_str}\n🌐 Source: TrustPositif - https://nawala.in/\n\n"
-                for i, r in enumerate(global_report):
+                
+                # --- FORMAT PESAN BARU SESUAI REQUEST ---
+                msg = f"📅 Waktu: {waktu_str}\n"
+                msg += f"🌐 Source: https://nawala.in\n\n"
+                
+                garis = "---------------------------------------"
+                
+                for r in global_report:
                     msg += f"🍄 UPDATE LINK [{r['name']}]\n"
-                    for d in r['removed']: msg += f"🔴 {d} - IPOS\n"
-                    for d in r['active']: msg += f"🟢 {d}\n"
-                    if i < len(global_report) - 1: msg += "------------------\n"
+                    msg += f"{garis}\n"
+                    
+                    # Tambahkan yang merah (IPOS) dulu biar kelihatan
+                    for d in r['removed']:
+                        msg += f"🔴 {d} - IPOS\n"
+                        
+                    # Tambahkan yang hijau (Aman)
+                    for d in r['active']:
+                        msg += f"🟢 {d}\n"
+                    
+                    msg += f"{garis}\n"
+                
+                # Kirim ke Telegram
                 send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
 
     except Exception as e:
