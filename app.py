@@ -68,7 +68,7 @@ def send_and_pin(token, chat_id, message):
         return False
     except: return False
 
-# --- MESIN UTAMA (1 BRAND = 1 API) ---
+# --- MESIN UTAMA (1 BRAND = 1 API DENGAN TRANSPARANSI KUOTA) ---
 def run_api_check():
     global log_buffer
     log_buffer = "" 
@@ -77,18 +77,17 @@ def run_api_check():
     ada_perubahan = False
     global_report = []
 
-    # Loop per Brand
     for target in TARGETS_IPOS:
         log("INFO", f"--- Memproses Brand: {target['name']} ---")
         domains = get_kv(target['key'])
         
         if not domains:
-            log("INFO", "Tidak ada domain. Skip.")
+            log("INFO", "Tidak ada domain di KV. Skip.")
             continue
             
         api_key = target.get("api_key", "")
         blocked_domains = []
-        chunk_size = 5 # Jaga-jaga kalau domainnya nambah lebih dari 5
+        chunk_size = 5 
         
         for i in range(0, len(domains), chunk_size):
             chunk = domains[i:i + chunk_size]
@@ -102,15 +101,19 @@ def run_api_check():
                 response = requests.post(url, headers=headers, json=payload, timeout=20)
                 res_json = response.json()
                 
+                # --- FITUR TRANSPARANSI KUOTA ---
+                # Mengambil data sisa kuota dari balikan API Nawala
+                remaining = res_json.get("remaining", "N/A")
+                log("STATS", f"📊 Sisa Kuota API {target['name']}: {remaining}/50")
+                
                 if response.status_code == 429:
-                    log("ERROR", f"Limit API untuk {target['name']} Habis!")
+                    log("ERROR", f"Limit API untuk {target['name']} HABIS TOTAL!")
                     continue
                     
                 if not res_json.get("success"):
                     log("ERROR", f"API Error pada {target['name']}: {res_json}")
                     continue
                 
-                # Baca Hasil
                 api_data = res_json.get("data", [])
                 for item in api_data:
                     dom = item.get("domain", "").lower().strip()
@@ -122,9 +125,8 @@ def run_api_check():
             except Exception as e:
                 log("ERROR", f"Gagal menghubungi API untuk {target['name']}: {e}")
                 
-            time.sleep(1) # Jeda sopan santun 1 detik antar tembakan API
+            time.sleep(1) 
             
-        # Pencatatan Status Per Brand
         active, removed = [], []
         for d in domains:
             d_l = d.lower().strip()
@@ -141,19 +143,17 @@ def run_api_check():
             
         global_report.append({"name": target["name"], "active": active, "removed": removed})
 
-    # Kirim ke Telegram kalau ada yang kena IPOS
     if ada_perubahan:
+        # ... (bagian kirim telegram tetap sama)
         log("INFO", "Mengirim laporan Telegram...")
         waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
         garis = "---------------------------------------"
         msg = f"📅 Waktu: {waktu_str}\n🌐 Source: API Nawala.Asia (Multi-Key)\n\n"
-        
         for r in global_report:
             msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
             for d in r['removed']: msg += f"🔴 {d} - IPOS\n"
             for d in r['active']: msg += f"🟢 {d}\n"
             msg += f"{garis}\n"
-            
         send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
 
     log("SUCCESS", "Pengecekan API Multi-Key Selesai!")
