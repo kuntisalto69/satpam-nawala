@@ -110,30 +110,23 @@ def run_playwright_check():
             page = context.new_page()
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            # --- SISTEM RETRY AGRESIF (5 DETIK) ---
             berhasil_muat = False
             for i in range(3):
                 try:
                     log("SYSTEM", f"Mencoba memuat nawala.in (Percobaan ke-{i+1})...")
                     page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
-                    
-                    # Cuma nunggu 5 detik! Kalau lewat, langsung skip ke retry berikutnya
                     response = page.goto("https://nawala.in/", timeout=5000, wait_until="commit")
                     
                     if response and response.status < 500:
                         log("SUCCESS", "Berhasil masuk ke Nawala.in!")
                         berhasil_muat = True
                         break
-                    else:
-                        log("WARN", f"Status Server: {response.status if response else 'No Response'}. Mengulang...")
-                except Exception as e:
+                except:
                     log("WARN", f"Gagal/Lemot di percobaan ke-{i+1} (Timeout 5s).")
-                
-                # Nunggu 3 detik aja biar nggak kelamaan
                 if i < 2: time.sleep(3) 
 
             if not berhasil_muat:
-                log("ERROR", "Nawala.in lemot/down parah setelah 3x coba.")
+                log("ERROR", "Nawala.in down.")
                 browser.close()
                 return log_buffer
             
@@ -146,9 +139,8 @@ def run_playwright_check():
 
             # --- MODE SAPU BERSIH: CEK SEMUA DOMAIN DALAM 1 KLIK ---
             semua_domain_target = []
-            brand_map = {} # Untuk mencatat domain ini punya brand mana
+            brand_map = {}
 
-            # 1. Kumpulkan semua domain dari semua brand dulu
             for target in TARGETS_IPOS:
                 domains = get_kv(target['key'])
                 if domains:
@@ -160,16 +152,18 @@ def run_playwright_check():
                 textarea = page.locator("textarea").first
                 check_button = page.locator("button").filter(has_text="Check Status")
 
-                # 2. Input SEMUA domain sekaligus
                 textarea.fill("") 
                 textarea.fill("\n".join(semua_domain_target))
                 check_button.click()
 
-                # 3. Tunggu hasil muncul
-                page.wait_for_selector("table tbody tr", timeout=15000)
-                time.sleep(2.0)
+                try:
+                    page.wait_for_selector("table tbody tr", timeout=15000)
+                    time.sleep(2.0)
+                except:
+                    log("ERROR", "Hasil tabel tidak muncul.")
+                    browser.close()
+                    return log_buffer
 
-                # 4. Ambil semua hasil dari tabel ke dalam kamus (map)
                 rows = page.locator("table tbody tr").all()
                 results_from_page = {}
                 for row in rows:
@@ -179,18 +173,14 @@ def run_playwright_check():
                         d_stat = cols[2].inner_text().strip().lower()
                         results_from_page[d_name] = d_stat
 
-                # 5. Distribusikan hasil balik ke masing-masing brand
                 for target in TARGETS_IPOS:
-                    # TAMBAHKAN BARIS INI BIAR LOG RAPI PER BRAND
                     log("INFO", f"Cek Brand: {target['name']}")
-                    
                     brand_domains = brand_map.get(target['name'], [])
                     active, removed = [], []
                     
                     for d in brand_domains:
                         d_lower = d.lower()
                         is_blocked = False
-                        # Cari di hasil map dari tabel
                         for res_dom, res_stat in results_from_page.items():
                             if d_lower in res_dom and "blocked" in res_stat:
                                 is_blocked = True
@@ -207,9 +197,6 @@ def run_playwright_check():
                         update_kv(target['key'], active)
                         ada_perubahan = True
                     global_report.append({"name": target["name"], "active": active, "removed": removed})
-                    
-                except Exception as e: 
-                    log("ERROR", f"Error di Brand {target['name']}: {e}")
 
             browser.close()
             
