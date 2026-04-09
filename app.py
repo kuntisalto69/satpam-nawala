@@ -193,7 +193,7 @@ def endpoint_patroli():
         """, mimetype='text/html')
 
     # Jika aman, jalankan patroli
-    LAST_RUN_TIME sekarang
+    LAST_RUN_TIME = sekarang
     hasil_log = run_api_check()
     
     return Response(f"""
