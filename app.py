@@ -179,7 +179,7 @@ def endpoint_patroli():
     sekarang = datetime.now()
 
     # REM DARURAT: Jika dipanggil lagi dalam waktu kurang dari 5 menit, TOLAK!
-    if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 300:
+    if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 1200:
         return Response(f"""
         <html>
             <head><meta http-equiv="refresh" content="300"></head>
