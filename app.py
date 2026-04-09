@@ -146,18 +146,19 @@ def run_playwright_check():
                 page.locator("button").filter(has_text="Check Status").click(force=True)
                 
                 try:
-                    # 1. Tunggu tabelnya muncul dulu
+                    # 1. Tunggu tabel muncul
                     page.wait_for_selector("table tbody tr", timeout=20000)
-                    log("SYSTEM", "Tabel muncul. Memulai pemantauan status...")
-
-                    # 2. LOGIKA POLLING (Cek terus sampai status 'matang')
-                    results_from_page = []
-                    timeout_polling = time.time() + 25  # Kita kasih waktu pantau sampai 25 detik
                     
-                    while time.time() < timeout_polling:
-                        current_results = []
+                    # 2. LOGIKA MATA ELANG (Polling 20 detik)
+                    results_from_page = []
+                    deadline = time.time() + 20 # Pantau terus selama 20 detik
+                    
+                    log("SYSTEM", "Melototin tabel... Menunggu status berubah jadi MERAH.")
+                    
+                    while time.time() < deadline:
+                        temp_results = []
                         rows = page.locator("table tbody tr").all()
-                        ada_yang_blocked = False
+                        ada_blocked = False
                         
                         for row in rows:
                             cols = row.locator("td").all()
@@ -166,32 +167,33 @@ def run_playwright_check():
                                 d_html = cols[2].inner_html().lower()
                                 d_text = cols[2].inner_text().strip().lower()
                                 
-                                # Deteksi blokir (Blocked / Internet Positif / Simbol Silang)
-                                is_hit = any(x in d_html or x in d_text for x in ["blocked", "✕", "danger", "red", "positif"])
-                                if is_hit: ada_yang_blocked = True
+                                # CEK SEGALA INDIKATOR: Simbol silang, Kata blocked, atau Class merah (danger/red)
+                                is_hit = any(x in d_html or x in d_text for x in ["blocked", "✕", "danger", "red", "internet positif"])
                                 
-                                current_results.append({"domain": d_name, "is_blocked": is_hit})
+                                if is_hit:
+                                    ada_blocked = True
+                                
+                                temp_results.append({"domain": d_name, "is_blocked": is_hit})
                         
-                        results_from_page = current_results
+                        results_from_page = temp_results
                         
-                        # JIKA SUDAH ADA YANG TERDETEKSI BLOKIR, BERARTI DATA SUDAH MATANG
-                        if ada_yang_blocked:
-                            log("SUCCESS", "Status BLOCKED terdeteksi! Mengambil data final...")
+                        # Jika sudah ada yang terdeteksi merah, berhenti nunggu dan langsung proses!
+                        if ada_blocked:
+                            log("SUCCESS", "DAPET! Domain BLOCKED terdeteksi di tabel.")
                             break
                         
-                        log("SYSTEM", "Status masih 'Checking/Aman'... menunggu 3 detik lagi...")
-                        time.sleep(3.0) # Cek ulang setiap 3 detik
-
-                    # 3. Distribusi hasil ke brand (Logikanya sama seperti sebelumnya)
+                        time.sleep(2.0) # Cek lagi tiap 2 detik
+                    
+                    # 3. Distribusi hasil ke Brand
                     for target in TARGETS_IPOS:
                         log("INFO", f"Cek Brand: {target['name']}")
                         brand_domains = brand_map.get(target['name'], [])
                         active, removed = [], []
+                        
                         for d in brand_domains:
                             d_l = d.lower().strip()
                             found = False
                             for res in results_from_page:
-                                # Pencocokan fleksibel (mengatasi www atau spasi)
                                 if d_l in res['domain'] or res['domain'] in d_l:
                                     found = True
                                     if res['is_blocked']:
@@ -211,7 +213,7 @@ def run_playwright_check():
                         global_report.append({"name": target["name"], "active": active, "removed": removed})
 
                 except Exception as e:
-                    log("ERROR", f"Tabel tidak muncul atau error: {e}")
+                    log("ERROR", f"Tabel macet atau error: {e}")
 
             browser.close()
             
