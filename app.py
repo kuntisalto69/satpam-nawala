@@ -179,12 +179,20 @@ def run_playwright_check():
                     active, removed = [], []
                     
                     for d in brand_domains:
-                        d_lower = d.lower()
+                        d_lower = d.lower().strip()
                         is_blocked = False
+                        
+                        # Cari domain di hasil tabel
                         for res_dom, res_stat in results_from_page.items():
-                            if d_lower in res_dom and "blocked" in res_stat:
-                                is_blocked = True
-                                break
+                            # Kita bersihkan teks domain dari spasi atau karakter aneh
+                            res_dom_clean = res_dom.replace(" ", "").strip()
+                            
+                            if d_lower in res_dom_clean:
+                                stat_lower = res_stat.lower()
+                                # CEK: Jika ada kata 'blocked' ATAU simbol silang '✕'
+                                if "blocked" in stat_lower or "✕" in res_stat:
+                                    is_blocked = True
+                                    break
                         
                         if is_blocked:
                             removed.append(d)
