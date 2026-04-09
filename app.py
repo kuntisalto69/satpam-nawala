@@ -110,13 +110,15 @@ def run_playwright_check():
             page = context.new_page()
             page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            # --- SISTEM RETRY 3 KALI ---
+            # --- SISTEM RETRY AGRESIF (5 DETIK) ---
             berhasil_muat = False
             for i in range(3):
                 try:
                     log("SYSTEM", f"Mencoba memuat nawala.in (Percobaan ke-{i+1})...")
                     page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
-                    response = page.goto("https://nawala.in/", timeout=10000, wait_until="domcontentloaded")
+                    
+                    # Cuma nunggu 5 detik! Kalau lewat, langsung skip ke retry berikutnya
+                    response = page.goto("https://nawala.in/", timeout=5000, wait_until="commit")
                     
                     if response and response.status < 500:
                         log("SUCCESS", "Berhasil masuk ke Nawala.in!")
@@ -125,12 +127,13 @@ def run_playwright_check():
                     else:
                         log("WARN", f"Status Server: {response.status if response else 'No Response'}. Mengulang...")
                 except Exception as e:
-                    log("WARN", f"Gagal di percobaan ke-{i+1}: {str(e)}")
+                    log("WARN", f"Gagal/Lemot di percobaan ke-{i+1} (Timeout 5s).")
                 
-                if i < 2: time.sleep(5)
+                # Nunggu 3 detik aja biar nggak kelamaan
+                if i < 2: time.sleep(3) 
 
             if not berhasil_muat:
-                log("ERROR", "Nawala.in tetap tidak bisa dibuka setelah 3x percobaan.")
+                log("ERROR", "Nawala.in lemot/down parah setelah 3x coba.")
                 browser.close()
                 return log_buffer
             
