@@ -1,37 +1,21 @@
 import os
 import json
-import time
 import requests
-import sys
-import subprocess
+import threading
 from datetime import datetime, timedelta, timezone
 from flask import Flask, Response
 
-# --- AUTO INSTALL PLAYWRIGHT ---
-def ensure_playwright_installed():
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        subprocess.call([sys.executable, "-m", "pip", "install", "playwright"])
-    
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        try:
-            p.chromium.launch(headless=True).close()
-        except Exception:
-            subprocess.call([sys.executable, "-m", "playwright", "install", "chromium"])
-
-ensure_playwright_installed()
-from playwright.sync_api import sync_playwright
-
 app = Flask(__name__)
 
-# --- KONFIGURASI ---
+# --- KONFIGURASI BOSKU ---
 CF_API_TOKEN = "YAHVlmAL47gnHM2roQ8KSW8uOEnfWIeRjdO6b9ua"
 CF_ACCOUNT_ID = "eb4b3a7ff38dbf069f2ecc29ae6637e4"
 KV_NAMESPACE_ID = "7c6ae9f3416f4fdebd7f5a1ba437d917"
 TELEGRAM_TOKEN_IPOS = "8222594585:AAHTZNHgwUm6bTvpt5DieR-5vFks4rhKHjE"
 CHAT_ID_IPOS = "6117482148"
+
+# ⚠️ MASUKKAN API KEY NAWALA.ASIA DI SINI ⚠️
+NAWALA_API_KEY = "ls_587523224c44bdff3b0ab9205826288aa7e54c51a82badfe" 
 
 TARGETS_IPOS = [
     {"name": "CNNSLOT", "key": "active_domains_cnn"},
@@ -49,6 +33,7 @@ def log(type_msg, msg):
     print(line, end="")
     log_buffer += line
 
+# --- FUNGSI CLOUDFLARE & TELEGRAM ---
 def get_kv(key_name):
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{KV_NAMESPACE_ID}/values/{key_name}"
     try:
@@ -89,165 +74,118 @@ def send_and_pin(token, chat_id, message):
         return False
     except: return False
 
-def run_playwright_check():
+# --- MESIN UTAMA (VIA API NAWALA) ---
+def run_api_check():
     global log_buffer
     log_buffer = "" 
-    log("SYSTEM", "Membuka Nawala Checker (Source: nawala.in)")
+    log("SYSTEM", "Memulai pengecekan via VVIP API Nawala.Asia...")
+
+    semua_domain_target = []
+    brand_map = {}
     
-    REAL_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    global_report, ada_perubahan = [], False
+    # 1. Ambil domain dari KV
+    for target in TARGETS_IPOS:
+        domains = get_kv(target['key'])
+        if domains:
+            semua_domain_target.extend(domains)
+            brand_map[target['name']] = domains
+
+    if not semua_domain_target:
+        log("INFO", "Tidak ada domain untuk dicek.")
+        return log_buffer
+
+    # 2. Tembak ke API Nawala
+    log("SYSTEM", f"Mengirim {len(semua_domain_target)} domain ke API...")
+    url = "https://api.nawala.link/public-check-domain"
+    headers = {
+        "X-Api-Key": NAWALA_API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "domain": ",".join(semua_domain_target)
+    }
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
-            context = browser.new_context(user_agent=REAL_USER_AGENT, viewport={"width": 1280, "height": 720})
-            page = context.new_page()
-
-            berhasil_muat = False
-            for i in range(3): # Kita kasih jatah 3x percobaan refresh
-                try:
-                    log("SYSTEM", f"Mencoba memuat nawala.in (Percobaan ke-{i+1})...")
-                    # Tunggu sampai networkidle (semua elemen beres dimuat)
-                    page.goto("https://nawala.in/", timeout=20000, wait_until="networkidle")
-                    
-                    # CEK: Apakah kotak input (textarea) sudah muncul di layar?
-                    # Ini kunci buat mastiin kita nggak kejebak di halaman Error 522
-                    textarea_exist = page.query_selector("textarea")
-                    
-                    if textarea_exist:
-                        log("SUCCESS", "Berhasil masuk ke Nawala.in dan siap input!")
-                        berhasil_muat = True
-                        break
-                    else:
-                        log("WARN", f"Masuk ke web tapi halaman error/kosong. Coba lagi...")
-                except Exception as e:
-                    log("WARN", f"Gagal/Lemot di percobaan ke-{i+1}: {str(e)}")
-                
-                if i < 2: time.sleep(5) # Jeda 5 detik sebelum refresh ulang
-
-            if not berhasil_muat:
-                log("ERROR", "Nawala.in tetap tidak bisa dibuka setelah 3x percobaan.")
-                browser.close()
-                return log_buffer
-
-            page.wait_for_selector("textarea", timeout=20000)
+        response = requests.post(url, headers=headers, json=payload, timeout=20)
+        res_json = response.json()
+        
+        if response.status_code == 429:
+            log("ERROR", f"Limit API Habis! Tersisa: {res_json.get('remaining', 0)}")
+            return log_buffer
             
-            semua_domain_target = []
-            brand_map = {}
-            for target in TARGETS_IPOS:
-                domains = get_kv(target['key'])
-                if domains:
-                    semua_domain_target.extend(domains)
-                    brand_map[target['name']] = domains
-
-            if semua_domain_target:
-                log("SYSTEM", f"Memulai cek {len(semua_domain_target)} domain sekaligus...")
-                page.locator("textarea").first.fill("\n".join(semua_domain_target))
-                page.locator("button").filter(has_text="Check Status").click(force=True)
-                
-                try:
-                    # 1. Tunggu tabel muncul
-                    page.wait_for_selector("table tbody tr", timeout=20000)
-                    
-                    # 2. LOGIKA MATA ELANG (Polling 20 detik)
-                    results_from_page = []
-                    deadline = time.time() + 20 # Pantau terus selama 20 detik
-                    
-                    log("SYSTEM", "Melototin tabel... Menunggu status berubah jadi MERAH.")
-                    
-                    while time.time() < deadline:
-                        temp_results = []
-                        rows = page.locator("table tbody tr").all()
-                        ada_blocked = False
-                        
-                        for row in rows:
-                            cols = row.locator("td").all()
-                            if len(cols) >= 3:
-                                d_name = cols[1].inner_text().strip().lower()
-                                d_html = cols[2].inner_html().lower()
-                                d_text = cols[2].inner_text().strip().lower()
-                                
-                                # CEK SEGALA INDIKATOR: Simbol silang, Kata blocked, atau Class merah (danger/red)
-                                is_hit = any(x in d_html or x in d_text for x in ["blocked", "✕", "danger", "red", "internet positif"])
-                                
-                                if is_hit:
-                                    ada_blocked = True
-                                
-                                temp_results.append({"domain": d_name, "is_blocked": is_hit})
-                        
-                        results_from_page = temp_results
-                        
-                        # Jika sudah ada yang terdeteksi merah, berhenti nunggu dan langsung proses!
-                        if ada_blocked:
-                            log("SUCCESS", "DAPET! Domain BLOCKED terdeteksi di tabel.")
-                            break
-                        
-                        time.sleep(2.0) # Cek lagi tiap 2 detik
-                    
-                    # 3. Distribusi hasil ke Brand
-                    for target in TARGETS_IPOS:
-                        log("INFO", f"Cek Brand: {target['name']}")
-                        brand_domains = brand_map.get(target['name'], [])
-                        active, removed = [], []
-                        
-                        for d in brand_domains:
-                            d_l = d.lower().strip()
-                            found = False
-                            for res in results_from_page:
-                                if d_l in res['domain'] or res['domain'] in d_l:
-                                    found = True
-                                    if res['is_blocked']:
-                                        removed.append(d)
-                                        log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
-                                    else:
-                                        active.append(d)
-                                        log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
-                                    break
-                            if not found:
-                                active.append(d)
-                                log("INFO", f"🟡 STATUS: SKIP ➜ {d}")
-
-                        if removed:
-                            update_kv(target['key'], active)
-                            ada_perubahan = True
-                        global_report.append({"name": target["name"], "active": active, "removed": removed})
-
-                except Exception as e:
-                    log("ERROR", f"Tabel macet atau error: {e}")
-
-            browser.close()
+        if not res_json.get("success"):
+            log("ERROR", f"API Error: {res_json}")
+            return log_buffer
             
-            if ada_perubahan:
-                log("INFO", "Mengirim laporan Telegram...")
-                waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
-                garis = "---------------------------------------------------------------------"
-                msg = f"📅 Waktu: {waktu_str}\n🌐 Source: https://nawala.in\n\n"
-                for r in global_report:
-                    msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
-                    for d in r['removed']: msg += f"🔴 {d} - IPOS\n"
-                    for d in r['active']: msg += f"🟢 {d}\n"
-                    msg += f"{garis}\n"
-                send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
-
     except Exception as e:
-        log("ERROR", f"CRITICAL CRASH: {e}")
+        log("ERROR", f"Gagal menghubungi API Nawala: {e}")
+        return log_buffer
+
+    # 3. Proses Hasil JSON dari API
+    api_data = res_json.get("data", [])
+    blocked_domains = []
+    
+    for item in api_data:
+        dom = item.get("domain", "").lower().strip()
+        is_nawala = item.get("nawala", {}).get("blocked", False)
+        is_network = item.get("network", {}).get("blocked", False)
+        
+        # Jika salah satu sistem mendeteksi blokir, catat!
+        if is_nawala or is_network:
+            blocked_domains.append(dom)
+
+    # 4. Distribusi Hasil & Update KV
+    ada_perubahan = False
+    global_report = []
+
+    for target in TARGETS_IPOS:
+        log("INFO", f"Cek Brand: {target['name']}")
+        brand_domains = brand_map.get(target['name'], [])
+        active, removed = [], []
+        
+        for d in brand_domains:
+            d_l = d.lower().strip()
+            if d_l in blocked_domains:
+                removed.append(d)
+                log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
+            else:
+                active.append(d)
+                log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
+
+        if removed:
+            update_kv(target['key'], active)
+            ada_perubahan = True
+        global_report.append({"name": target["name"], "active": active, "removed": removed})
+
+    # 5. Kirim Laporan ke Telegram
+    if ada_perubahan:
+        log("INFO", "Mengirim laporan Telegram...")
+        waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
+        garis = "---------------------------------------"
+        msg = f"📅 Waktu: {waktu_str}\n🌐 Source: API Nawala.Asia\n\n"
+        
+        for r in global_report:
+            msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
+            for d in r['removed']: msg += f"🔴 {d} - IPOS\n"
+            for d in r['active']: msg += f"🟢 {d}\n"
+            msg += f"{garis}\n"
+            
+        send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
+
+    log("SUCCESS", "Pengecekan API Selesai!")
     return log_buffer
 
 # --- ENDPOINT API ---
-import threading
-
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
-    # Jalankan robot di latar belakang biar Cron-job tidak perlu nunggu
-    thread = threading.Thread(target=run_playwright_check)
+    # Jalankan di Background agar Cron-Job tidak Timeout
+    thread = threading.Thread(target=run_api_check)
     thread.start()
-    
-    # Langsung kasih jawaban ke Cron-job dalam hitungan milidetik!
-    return Response("<h3 style='color:green; font-family:monospace;'>🚀 Patroli sedang berjalan di latar belakang... Silakan pantau Log Render atau Telegram Bosku!</h3>", mimetype='text/html', status=200)
+    return Response("<h3 style='color:green; font-family:monospace;'>🚀 Patroli API Nawala sedang berjalan di latar belakang... Cek log server/Telegram!</h3>", mimetype='text/html', status=200)
 
 @app.route('/')
 def home():
-    return "Satpam Nawala Aktif! Akses /jalankan-patroli"
+    return "Satpam Nawala (Versi API) Aktif! Akses /jalankan-patroli"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
