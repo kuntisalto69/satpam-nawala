@@ -101,10 +101,20 @@ def run_api_check():
                 response = requests.post(url, headers=headers, json=payload, timeout=20)
                 res_json = response.json()
                 
-                # --- FITUR TRANSPARANSI KUOTA ---
-                # Mengambil data sisa kuota dari balikan API Nawala
-                remaining = res_json.get("remaining", "N/A")
-                log("STATS", f"📊 Sisa Kuota API {target['name']}: {remaining}/50")
+                # --- PENGAMBILAN DATA PEMAKAIAN API ---
+                # Kita ambil 'X-Ratelimit-Used' dari header, jika tidak ada pakai data dashboard Bosku
+                used = response.headers.get('X-Ratelimit-Used')
+                
+                # Jika API tidak kasih header, kita pakai hitungan manual sederhana
+                if not used or used == "N/A":
+                    # Mencoba ambil dari sisa kuota (50 - remaining)
+                    rem = response.headers.get('X-Ratelimit-Remaining')
+                    if rem and rem.isdigit():
+                        used = 50 - int(rem)
+                    else:
+                        used = "Cek Dashboard" # Fallback jika benar-benar tidak terbaca
+
+                log("STATS", f"📊 Pemakaian API {target['name']}: {used}/50")
                 
                 if response.status_code == 429:
                     log("ERROR", f"Limit API untuk {target['name']} HABIS TOTAL!")
