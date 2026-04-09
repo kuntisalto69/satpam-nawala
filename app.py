@@ -107,7 +107,7 @@ def run_playwright_check():
             for i in range(3):
                 try:
                     log("SYSTEM", f"Mencoba memuat nawala.in (Percobaan ke-{i+1})...")
-                    response = page.goto("https://nawala.in/", timeout=10000, wait_until="commit")
+                    response = page.goto("https://nawala.in/", timeout=15000, wait_until="networkidle")
                     if response and response.status < 500:
                         log("SUCCESS", "Berhasil masuk ke Nawala.in!")
                         berhasil_muat = True
@@ -137,9 +137,12 @@ def run_playwright_check():
                 page.locator("button").filter(has_text="Check Status").click(force=True)
                 
                 try:
-                    page.wait_for_selector("table tbody tr", timeout=15000)
-                    log("SYSTEM", "Menunggu proses status (Jeda 8 detik)...")
-                    time.sleep(8.0)
+                    # Tunggu tabel muncul
+                    page.wait_for_selector("table tbody tr", timeout=20000)
+                    
+                    # --- JEDA SAKTI 15 DETIK (BIAR STATUS MERAH MUNCUL SEMPURNA) ---
+                    log("SYSTEM", "Menunggu Nawala memproses status (Jeda 15 detik)...")
+                    time.sleep(15.0)
                     
                     rows = page.locator("table tbody tr").all()
                     results_from_page = []
@@ -147,9 +150,12 @@ def run_playwright_check():
                         cols = row.locator("td").all()
                         if len(cols) >= 3:
                             d_name = cols[1].inner_text().strip().lower()
+                            # Ambil semua teks dan kode HTML di kolom status
                             d_text = cols[2].inner_text().strip().lower()
                             d_html = cols[2].inner_html().lower()
-                            is_hit = any(x in d_text or x in d_html for x in ["blocked", "✕"])
+                            
+                            # Cek indikator blokir: kata 'blocked', simbol '✕', atau kata 'positif'
+                            is_hit = any(x in d_text or x in d_html for x in ["blocked", "✕", "positif"])
                             results_from_page.append({"domain": d_name, "is_blocked": is_hit})
 
                     for target in TARGETS_IPOS:
@@ -160,6 +166,7 @@ def run_playwright_check():
                             d_l = d.lower().strip()
                             found = False
                             for res in results_from_page:
+                                # Pencocokan fleksibel (mengatasi www atau spasi)
                                 if d_l in res['domain'] or res['domain'] in d_l:
                                     found = True
                                     if res['is_blocked']:
@@ -186,21 +193,13 @@ def run_playwright_check():
             if ada_perubahan:
                 log("INFO", "Mengirim laporan Telegram...")
                 waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
-                
-                # --- FORMAT PESAN BARU SESUAI REQUEST ---
-                msg = f"📅 Waktu: {waktu_str}\n"
-                msg += f"🌐 Source: https://nawala.in\n\n"
-                
                 garis = "---------------------------------------"
-                
+                msg = f"📅 Waktu: {waktu_str}\n🌐 Source: https://nawala.in\n\n"
                 for r in global_report:
-                    msg += f"🍄 UPDATE LINK [{r['name']}]\n"
+                    msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
+                    for d in r['removed']: msg += f"🔴 {d} - IPOS\n"
+                    for d in r['active']: msg += f"🟢 {d}\n"
                     msg += f"{garis}\n"
-                    for d in r['removed']:
-                        msg += f"🔴 {d} - IPOS\n"
-                    for d in r['active']:
-                        msg += f"🟢 {d}\n"                   
-                    msg += f"{garis}\n"    
                 send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
 
     except Exception as e:
