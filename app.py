@@ -104,20 +104,29 @@ def run_playwright_check():
             page = context.new_page()
 
             berhasil_muat = False
-            for i in range(3):
+            for i in range(3): # Kita kasih jatah 3x percobaan refresh
                 try:
                     log("SYSTEM", f"Mencoba memuat nawala.in (Percobaan ke-{i+1})...")
-                    response = page.goto("https://nawala.in/", timeout=15000, wait_until="networkidle")
-                    if response and response.status < 500:
-                        log("SUCCESS", "Berhasil masuk ke Nawala.in!")
+                    # Tunggu sampai networkidle (semua elemen beres dimuat)
+                    page.goto("https://nawala.in/", timeout=20000, wait_until="networkidle")
+                    
+                    # CEK: Apakah kotak input (textarea) sudah muncul di layar?
+                    # Ini kunci buat mastiin kita nggak kejebak di halaman Error 522
+                    textarea_exist = page.query_selector("textarea")
+                    
+                    if textarea_exist:
+                        log("SUCCESS", "Berhasil masuk ke Nawala.in dan siap input!")
                         berhasil_muat = True
                         break
-                except:
-                    log("WARN", "Timeout memuat halaman, mencoba lagi...")
-                if i < 2: time.sleep(3)
+                    else:
+                        log("WARN", f"Masuk ke web tapi halaman error/kosong. Coba lagi...")
+                except Exception as e:
+                    log("WARN", f"Gagal/Lemot di percobaan ke-{i+1}: {str(e)}")
+                
+                if i < 2: time.sleep(5) # Jeda 5 detik sebelum refresh ulang
 
             if not berhasil_muat:
-                log("ERROR", "Nawala.in tidak bisa diakses.")
+                log("ERROR", "Nawala.in tetap tidak bisa dibuka setelah 3x percobaan.")
                 browser.close()
                 return log_buffer
 
