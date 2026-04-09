@@ -144,47 +144,65 @@ def run_playwright_check():
                 browser.close()
                 return log_buffer
 
-            # --- MULAI CEK DOMAIN (MODE SATU-SATU) ---
+            # --- MODE SAPU BERSIH: CEK SEMUA DOMAIN DALAM 1 KLIK ---
+            semua_domain_target = []
+            brand_map = {} # Untuk mencatat domain ini punya brand mana
+
+            # 1. Kumpulkan semua domain dari semua brand dulu
             for target in TARGETS_IPOS:
-                try:
-                    domains = get_kv(target['key'])
-                    if not domains: continue
+                domains = get_kv(target['key'])
+                if domains:
+                    semua_domain_target.extend(domains)
+                    brand_map[target['name']] = domains
 
+            if semua_domain_target:
+                log("SYSTEM", f"Memulai cek {len(semua_domain_target)} domain sekaligus...")
+                textarea = page.locator("textarea").first
+                check_button = page.locator("button").filter(has_text="Check Status")
+
+                # 2. Input SEMUA domain sekaligus
+                textarea.fill("") 
+                textarea.fill("\n".join(semua_domain_target))
+                check_button.click()
+
+                # 3. Tunggu hasil muncul
+                page.wait_for_selector("table tbody tr", timeout=15000)
+                time.sleep(2.0)
+
+                # 4. Ambil semua hasil dari tabel ke dalam kamus (map)
+                rows = page.locator("table tbody tr").all()
+                results_from_page = {}
+                for row in rows:
+                    cols = row.locator("td").all()
+                    if len(cols) >= 3:
+                        d_name = cols[1].inner_text().strip().lower()
+                        d_stat = cols[2].inner_text().strip().lower()
+                        results_from_page[d_name] = d_stat
+
+                # 5. Distribusikan hasil balik ke masing-masing brand
+                for target in TARGETS_IPOS:
+                    # TAMBAHKAN BARIS INI BIAR LOG RAPI PER BRAND
                     log("INFO", f"Cek Brand: {target['name']}")
-                    textarea = page.locator("textarea").first
-                    check_button = page.locator("button").filter(has_text="Check Status")
-
-                    removed, active = [], []
                     
-                    # CEK SATU PER SATU BIAR AKURAT
-                    for d in domains:
-                        try:
-                            # 1. Bersihkan kotak dan isi 1 domain saja
-                            textarea.fill("") 
-                            textarea.fill(d)
-                            
-                            # 2. Klik Cek
-                            check_button.click()
-                            
-                            # 3. Tunggu tabel update (Kasih jeda 3 detik)
-                            time.sleep(3.0) 
-                            
-                            # 4. Cari baris hasil yang mengandung nama domain tersebut
-                            # Kita cari teks "Blocked" di dalam tabel
-                            hasil_teks = page.locator("table tbody").inner_text().lower()
-                            
-                            if d.lower() in hasil_teks and "blocked" in hasil_teks:
-                                removed.append(d)
-                                log("WARN", f"🔴 STATUS: IPOS ➜ {d} [DELETED]")
-                            else:
-                                active.append(d)
-                                log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
-                                
-                        except Exception as e:
-                            log("ERROR", f"Gagal cek {d}, dilewati dulu.")
+                    brand_domains = brand_map.get(target['name'], [])
+                    active, removed = [], []
+                    
+                    for d in brand_domains:
+                        d_lower = d.lower()
+                        is_blocked = False
+                        # Cari di hasil map dari tabel
+                        for res_dom, res_stat in results_from_page.items():
+                            if d_lower in res_dom and "blocked" in res_stat:
+                                is_blocked = True
+                                break
+                        
+                        if is_blocked:
+                            removed.append(d)
+                            log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
+                        else:
                             active.append(d)
-                    
-                    # Update KV jika ada yang rontok
+                            log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
+
                     if removed:
                         update_kv(target['key'], active)
                         ada_perubahan = True
