@@ -193,7 +193,7 @@ def run_playwright_check():
             if ada_perubahan:
                 log("INFO", "Mengirim laporan Telegram...")
                 waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
-                garis = "---------------------------------------"
+                garis = "---------------------------------------------------------------------"
                 msg = f"📅 Waktu: {waktu_str}\n🌐 Source: https://nawala.in\n\n"
                 for r in global_report:
                     msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
