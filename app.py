@@ -3,7 +3,7 @@ import json
 import time
 import requests
 from datetime import datetime, timedelta, timezone
-from flask import Flask, Response
+from flask import Flask, Response, request
 
 app = Flask(__name__)
 
@@ -173,12 +173,16 @@ def run_api_check():
 # Simpan waktu terakhir jalan di memori (biar gak jebol kuota)
 LAST_RUN_TIME = None
 
-@app.route('/jalankan-patroli')
+@app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
 def endpoint_patroli():
+    # BIKIN ROBOT MENGABAIKAN KETUKAN 'HEAD'
+    if request.method == 'HEAD':
+        return Response("", status=200)
+
     global LAST_RUN_TIME
     sekarang = datetime.now()
 
-    # REM DARURAT: Jika dipanggil lagi dalam waktu kurang dari 5 menit, TOLAK!
+    # REM DARURAT: Jika dipanggil lagi dalam waktu kurang dari 20 menit, TOLAK!
     if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 1200:
         return Response(f"""
         <html>
