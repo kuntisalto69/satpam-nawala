@@ -165,14 +165,31 @@ def run_playwright_check():
                     return log_buffer
 
                 rows = page.locator("table tbody tr").all()
-                results_from_page = {}
+                results_from_page = []
+                
+                log("SYSTEM", f"Menemukan {len(rows)} baris di tabel. Mulai scanning...")
+                
                 for row in rows:
-                    cols = row.locator("td").all()
-                    if len(cols) >= 3:
-                        d_name = cols[1].inner_text().strip().lower()
-                        d_stat = cols[2].inner_text().strip().lower()
-                        results_from_page[d_name] = d_stat
-
+                    try:
+                        cols = row.locator("td").all()
+                        if len(cols) >= 3:
+                            # Nama domain ada di kolom ke-2 (index 1)
+                            d_name = cols[1].inner_text().strip().lower()
+                            
+                            # Status ada di kolom ke-3 (index 2)
+                            # Kita ambil inner_text dan inner_html buat jaga-jaga
+                            status_text = cols[2].inner_text().strip().lower()
+                            status_html = cols[2].inner_html().lower()
+                            
+                            # Logika deteksi: Jika ada kata blocked, simbol ✕, atau badge merah
+                            is_hit = False
+                            if "blocked" in status_text or "blocked" in status_html or "✕" in status_text:
+                                is_hit = True
+                            
+                            results_from_page.append({"domain": d_name, "is_blocked": is_hit})
+                    except Exception as e:
+                        continue
+                        
                 for target in TARGETS_IPOS:
                     log("INFO", f"Cek Brand: {target['name']}")
                     brand_domains = brand_map.get(target['name'], [])
@@ -180,26 +197,24 @@ def run_playwright_check():
                     
                     for d in brand_domains:
                         d_lower = d.lower().strip()
-                        is_blocked = False
+                        found_in_table = False
                         
-                        # Cari domain di hasil tabel
-                        for res_dom, res_stat in results_from_page.items():
-                            # Kita bersihkan teks domain dari spasi atau karakter aneh
-                            res_dom_clean = res_dom.replace(" ", "").strip()
-                            
-                            if d_lower in res_dom_clean:
-                                stat_lower = res_stat.lower()
-                                # CEK: Jika ada kata 'blocked' ATAU simbol silang '✕'
-                                if "blocked" in stat_lower or "✕" in res_stat:
-                                    is_blocked = True
-                                    break
+                        for res in results_from_page:
+                            # Gunakan 'in' agar domain.com cocok dengan www.domain.com
+                            if d_lower in res['domain'] or res['domain'] in d_lower:
+                                found_in_table = True
+                                if res['is_blocked']:
+                                    removed.append(d)
+                                    log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
+                                else:
+                                    active.append(d)
+                                    log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
+                                break
                         
-                        if is_blocked:
-                            removed.append(d)
-                            log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
-                        else:
+                        if not found_in_table:
+                            # Jika tidak ada di tabel, biarkan aktif tapi beri tanda
                             active.append(d)
-                            log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
+                            log("INFO", f"🟡 STATUS: SKIP ➜ {d} (Tidak terdeteksi di tabel)")
 
                     if removed:
                         update_kv(target['key'], active)
