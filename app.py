@@ -7,27 +7,26 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from flask import Flask, Response
 
-# --- AUTO INSTALL PLAYWRIGHT (WAJIB UNTUK RENDER) ---
+# --- AUTO INSTALL PLAYWRIGHT ---
 def ensure_playwright_installed():
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
+        subprocess.call([sys.executable, "-m", "pip", "install", "playwright"])
     
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
         try:
             p.chromium.launch(headless=True).close()
         except Exception:
-            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+            subprocess.call([sys.executable, "-m", "playwright", "install", "chromium"])
 
 ensure_playwright_installed()
 from playwright.sync_api import sync_playwright
 
-# --- INISIALISASI FLASK ---
 app = Flask(__name__)
 
-# --- KONFIGURASI BOSKU (SUDAH VALID) ---
+# --- KONFIGURASI ---
 CF_API_TOKEN = "YAHVlmAL47gnHM2roQ8KSW8uOEnfWIeRjdO6b9ua"
 CF_ACCOUNT_ID = "eb4b3a7ff38dbf069f2ecc29ae6637e4"
 KV_NAMESPACE_ID = "7c6ae9f3416f4fdebd7f5a1ba437d917"
@@ -50,7 +49,6 @@ def log(type_msg, msg):
     print(line, end="")
     log_buffer += line
 
-# --- FUNGSI CLOUDFLARE & TELEGRAM ---
 def get_kv(key_name):
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/storage/kv/namespaces/{KV_NAMESPACE_ID}/values/{key_name}"
     try:
@@ -91,10 +89,6 @@ def send_and_pin(token, chat_id, message):
         return False
     except: return False
 
-def chunk_list(lst, n):
-    for i in range(0, len(lst), n): yield lst[i:i + n]
-
-# --- MESIN PLAYWRIGHT DENGAN SISTEM RETRY ---
 def run_playwright_check():
     global log_buffer
     log_buffer = "" 
@@ -105,42 +99,32 @@ def run_playwright_check():
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"])
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"])
             context = browser.new_context(user_agent=REAL_USER_AGENT, viewport={"width": 1280, "height": 720})
             page = context.new_page()
-            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             berhasil_muat = False
             for i in range(3):
                 try:
                     log("SYSTEM", f"Mencoba memuat nawala.in (Percobaan ke-{i+1})...")
-                    page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
-                    response = page.goto("https://nawala.in/", timeout=5000, wait_until="commit")
-                    
+                    response = page.goto("https://nawala.in/", timeout=10000, wait_until="commit")
                     if response and response.status < 500:
                         log("SUCCESS", "Berhasil masuk ke Nawala.in!")
                         berhasil_muat = True
                         break
                 except:
-                    log("WARN", f"Gagal/Lemot di percobaan ke-{i+1} (Timeout 5s).")
-                if i < 2: time.sleep(3) 
+                    log("WARN", "Timeout memuat halaman, mencoba lagi...")
+                if i < 2: time.sleep(3)
 
             if not berhasil_muat:
-                log("ERROR", "Nawala.in down.")
-                browser.close()
-                return log_buffer
-            
-            try:
-                page.wait_for_selector("textarea", timeout=20000)
-            except:
-                log("ERROR", "Kotak input tidak ditemukan.")
+                log("ERROR", "Nawala.in tidak bisa diakses.")
                 browser.close()
                 return log_buffer
 
-            # --- MODE SAPU BERSIH: CEK SEMUA DOMAIN DALAM 1 KLIK ---
+            page.wait_for_selector("textarea", timeout=20000)
+            
             semua_domain_target = []
             brand_map = {}
-
             for target in TARGETS_IPOS:
                 domains = get_kv(target['key'])
                 if domains:
@@ -149,77 +133,53 @@ def run_playwright_check():
 
             if semua_domain_target:
                 log("SYSTEM", f"Memulai cek {len(semua_domain_target)} domain sekaligus...")
-                textarea = page.locator("textarea").first
-                check_button = page.locator("button").filter(has_text="Check Status")
-
-                textarea.fill("") 
-                textarea.fill("\n".join(semua_domain_target))
-                check_button.click()
-
+                page.locator("textarea").first.fill("\n".join(semua_domain_target))
+                page.locator("button").filter(has_text="Check Status").click(force=True)
+                
                 try:
                     page.wait_for_selector("table tbody tr", timeout=15000)
-                    time.sleep(2.0)
-                except:
-                    log("ERROR", "Hasil tabel tidak muncul.")
-                    browser.close()
-                    return log_buffer
-
-                rows = page.locator("table tbody tr").all()
-                results_from_page = []
-                
-                log("SYSTEM", f"Menemukan {len(rows)} baris di tabel. Mulai scanning...")
-                
-                for row in rows:
-                    try:
+                    log("SYSTEM", "Menunggu proses status (Jeda 8 detik)...")
+                    time.sleep(8.0)
+                    
+                    rows = page.locator("table tbody tr").all()
+                    results_from_page = []
+                    for row in rows:
                         cols = row.locator("td").all()
                         if len(cols) >= 3:
-                            # Nama domain ada di kolom ke-2 (index 1)
                             d_name = cols[1].inner_text().strip().lower()
-                            
-                            # Status ada di kolom ke-3 (index 2)
-                            # Kita ambil inner_text dan inner_html buat jaga-jaga
-                            status_text = cols[2].inner_text().strip().lower()
-                            status_html = cols[2].inner_html().lower()
-                            
-                            # Logika deteksi: Jika ada kata blocked, simbol ✕, atau badge merah
-                            is_hit = False
-                            if "blocked" in status_text or "blocked" in status_html or "✕" in status_text:
-                                is_hit = True
-                            
+                            d_text = cols[2].inner_text().strip().lower()
+                            d_html = cols[2].inner_html().lower()
+                            is_hit = any(x in d_text or x in d_html for x in ["blocked", "✕"])
                             results_from_page.append({"domain": d_name, "is_blocked": is_hit})
-                    except Exception as e:
-                        continue
-                        
-                for target in TARGETS_IPOS:
-                    log("INFO", f"Cek Brand: {target['name']}")
-                    brand_domains = brand_map.get(target['name'], [])
-                    active, removed = [], []
-                    
-                    for d in brand_domains:
-                        d_lower = d.lower().strip()
-                        found_in_table = False
-                        
-                        for res in results_from_page:
-                            # Gunakan 'in' agar domain.com cocok dengan www.domain.com
-                            if d_lower in res['domain'] or res['domain'] in d_lower:
-                                found_in_table = True
-                                if res['is_blocked']:
-                                    removed.append(d)
-                                    log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
-                                else:
-                                    active.append(d)
-                                    log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
-                                break
-                        
-                        if not found_in_table:
-                            # Jika tidak ada di tabel, biarkan aktif tapi beri tanda
-                            active.append(d)
-                            log("INFO", f"🟡 STATUS: SKIP ➜ {d} (Tidak terdeteksi di tabel)")
 
-                    if removed:
-                        update_kv(target['key'], active)
-                        ada_perubahan = True
-                    global_report.append({"name": target["name"], "active": active, "removed": removed})
+                    for target in TARGETS_IPOS:
+                        log("INFO", f"Cek Brand: {target['name']}")
+                        brand_domains = brand_map.get(target['name'], [])
+                        active, removed = [], []
+                        for d in brand_domains:
+                            d_l = d.lower().strip()
+                            found = False
+                            for res in results_from_page:
+                                if d_l in res['domain'] or res['domain'] in d_l:
+                                    found = True
+                                    if res['is_blocked']:
+                                        removed.append(d)
+                                        log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
+                                    else:
+                                        active.append(d)
+                                        log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
+                                    break
+                            if not found:
+                                active.append(d)
+                                log("INFO", f"🟡 STATUS: SKIP ➜ {d}")
+
+                        if removed:
+                            update_kv(target['key'], active)
+                            ada_perubahan = True
+                        global_report.append({"name": target["name"], "active": active, "removed": removed})
+
+                except Exception as e:
+                    log("ERROR", f"Tabel tidak muncul atau error: {e}")
 
             browser.close()
             
@@ -236,26 +196,17 @@ def run_playwright_check():
                 for r in global_report:
                     msg += f"🍄 UPDATE LINK [{r['name']}]\n"
                     msg += f"{garis}\n"
-                    
-                    # Tambahkan yang merah (IPOS) dulu biar kelihatan
                     for d in r['removed']:
                         msg += f"🔴 {d} - IPOS\n"
-                        
-                    # Tambahkan yang hijau (Aman)
                     for d in r['active']:
-                        msg += f"🟢 {d}\n"
-                    
-                    msg += f"{garis}\n"
-                
-                # Kirim ke Telegram
+                        msg += f"🟢 {d}\n"                   
+                    msg += f"{garis}\n"    
                 send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
 
     except Exception as e:
         log("ERROR", f"CRITICAL CRASH: {e}")
-    
     return log_buffer
 
-# --- ENDPOINT API ---
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
     hasil_log = run_playwright_check()
