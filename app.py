@@ -144,7 +144,7 @@ def run_playwright_check():
                 browser.close()
                 return log_buffer
 
-            # --- MULAI CEK DOMAIN ---
+            # --- MULAI CEK DOMAIN (MODE SATU-SATU) ---
             for target in TARGETS_IPOS:
                 try:
                     domains = get_kv(target['key'])
@@ -155,45 +155,43 @@ def run_playwright_check():
                     check_button = page.locator("button").filter(has_text="Check Status")
 
                     removed, active = [], []
-                    for batch in list(chunk_list(domains, 20)):
+                    
+                    # CEK SATU PER SATU BIAR AKURAT
+                    for d in domains:
                         try:
+                            # 1. Bersihkan kotak dan isi 1 domain saja
                             textarea.fill("") 
-                            textarea.fill("\n".join(batch))
+                            textarea.fill(d)
+                            
+                            # 2. Klik Cek
                             check_button.click()
                             
-                            page.wait_for_selector("table tbody tr", timeout=20000)
-                            time.sleep(2.0) 
-                            rows = page.locator("table tbody tr").all()
+                            # 3. Tunggu tabel update (Kasih jeda 3 detik)
+                            time.sleep(3.0) 
                             
-                            status_map = {} 
-                            for row in rows:
-                                cols = row.locator("td").all()
-                                if len(cols) >= 3:
-                                    status_map[cols[1].inner_text().strip().lower()] = cols[2].inner_text().strip().lower()
+                            # 4. Cari baris hasil yang mengandung nama domain tersebut
+                            # Kita cari teks "Blocked" di dalam tabel
+                            hasil_teks = page.locator("table tbody").inner_text().lower()
                             
-                            for d in batch:
-                                d_lower = d.lower()
-                                current_status = "aman" 
-                                for map_dom, map_stat in status_map.items():
-                                    if d_lower in map_dom:
-                                        current_status = map_stat
-                                        break
+                            if d.lower() in hasil_teks and "blocked" in hasil_teks:
+                                removed.append(d)
+                                log("WARN", f"🔴 STATUS: IPOS ➜ {d} [DELETED]")
+                            else:
+                                active.append(d)
+                                log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
                                 
-                                if "blocked" in current_status:
-                                    removed.append(d)
-                                    log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE KV]")
-                                else:
-                                    active.append(d)
-                                    log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
                         except Exception as e:
-                            log("ERROR", "Tabel hasil lambat/tidak muncul.")
-                            for d in batch: active.append(d)
+                            log("ERROR", f"Gagal cek {d}, dilewati dulu.")
+                            active.append(d)
                     
+                    # Update KV jika ada yang rontok
                     if removed:
                         update_kv(target['key'], active)
                         ada_perubahan = True
                     global_report.append({"name": target["name"], "active": active, "removed": removed})
-                except Exception as e: log("ERROR", f"Error {target['name']}: {e}")
+                    
+                except Exception as e: 
+                    log("ERROR", f"Error di Brand {target['name']}: {e}")
 
             browser.close()
             
