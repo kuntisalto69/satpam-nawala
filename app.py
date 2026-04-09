@@ -233,10 +233,17 @@ def run_playwright_check():
         log("ERROR", f"CRITICAL CRASH: {e}")
     return log_buffer
 
+# --- ENDPOINT API ---
+import threading
+
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
-    hasil_log = run_playwright_check()
-    return Response(f"<pre style='background:#1e1e1e; color:#00ff00; padding:20px; font-family:monospace; font-size:14px;'>{hasil_log}</pre>", mimetype='text/html')
+    # Jalankan robot di latar belakang biar Cron-job tidak perlu nunggu
+    thread = threading.Thread(target=run_playwright_check)
+    thread.start()
+    
+    # Langsung kasih jawaban ke Cron-job dalam hitungan milidetik!
+    return Response("<h3 style='color:green; font-family:monospace;'>🚀 Patroli sedang berjalan di latar belakang... Silakan pantau Log Render atau Telegram Bosku!</h3>", mimetype='text/html', status=200)
 
 @app.route('/')
 def home():
