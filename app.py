@@ -1,7 +1,7 @@
 import os
 import json
+import time
 import requests
-import threading
 from datetime import datetime, timedelta, timezone
 from flask import Flask, Response
 
@@ -14,16 +14,25 @@ KV_NAMESPACE_ID = "7c6ae9f3416f4fdebd7f5a1ba437d917"
 TELEGRAM_TOKEN_IPOS = "8222594585:AAHTZNHgwUm6bTvpt5DieR-5vFks4rhKHjE"
 CHAT_ID_IPOS = "6117482148"
 
-# ⚠️ MASUKKAN API KEY NAWALA.ASIA DI SINI ⚠️
-NAWALA_API_KEY = "ls_587523224c44bdff3b0ab9205826288aa7e54c51a82badfe" 
-
+# ⚠️ 3 API KEY DARI 3 AKUN BERBEDA ⚠️
 TARGETS_IPOS = [
-    {"name": "CNNSLOT", "key": "active_domains_cnn"},
-    {"name": "RTP8000", "key": "active_domains_rtp"},
-    {"name": "RUBY8000", "key": "active_domains_ruby"}
+    {
+        "name": "CNNSLOT", 
+        "key": "active_domains_cnn",
+        "api_key": "ls_796e4ae8c9836dbcc93e5a45c67e18e6285c3b55c50a3ebc" 
+    },
+    {
+        "name": "RTP8000", 
+        "key": "active_domains_rtp",
+        "api_key": "ls_b292d9ba81798d79a42ba5312b3653f04d1dbdb3a41f220b" 
+    },
+    {
+        "name": "RUBY8000", 
+        "key": "active_domains_ruby",
+        "api_key": "ls_4d9bae2ee5c8e27f58942145a421e289956d69d664e7f432" 
+    }
 ]
 
-HISTORY_FILE = "bot_history.json"
 log_buffer = ""
 
 def log(type_msg, msg):
@@ -46,104 +55,78 @@ def update_kv(key_name, new_list):
     headers = {"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}
     requests.put(url, headers=headers, data=json.dumps(new_list))
 
-def load_history():
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, 'r') as f: return json.load(f)
-        except: return {}
-    return {}
-
-def save_history(data):
-    with open(HISTORY_FILE, 'w') as f: json.dump(data, f)
-
 def send_and_pin(token, chat_id, message):
     try:
-        history = load_history()
-        history_key = f"{token[-10:]}_{chat_id}" 
-        if history_key in history:
-            try: requests.post(f"https://api.telegram.org/bot{token}/deleteMessage", data={"chat_id": chat_id, "message_id": history[history_key]})
-            except: pass
+        # Langsung tembak pesan ke Telegram
         r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": message, "disable_web_page_preview": "true"})
         if r.status_code == 200:
             new_msg_id = r.json().get('result', {}).get('message_id')
             if new_msg_id:
+                # Langsung Pin pesannya
                 requests.post(f"https://api.telegram.org/bot{token}/pinChatMessage", data={"chat_id": chat_id, "message_id": new_msg_id})
-                history[history_key] = new_msg_id
-                save_history(history)
             return True
         return False
     except: return False
 
-# --- MESIN UTAMA (VIA API NAWALA) ---
+# --- MESIN UTAMA (1 BRAND = 1 API) ---
 def run_api_check():
     global log_buffer
     log_buffer = "" 
-    log("SYSTEM", "Memulai pengecekan via VVIP API Nawala.Asia...")
+    log("SYSTEM", "Memulai pengecekan VVIP (1 Brand = 1 API Key)...")
 
-    semua_domain_target = []
-    brand_map = {}
-    
-    # 1. Ambil domain dari KV
-    for target in TARGETS_IPOS:
-        domains = get_kv(target['key'])
-        if domains:
-            semua_domain_target.extend(domains)
-            brand_map[target['name']] = domains
-
-    if not semua_domain_target:
-        log("INFO", "Tidak ada domain untuk dicek.")
-        return log_buffer
-
-    # 2. Tembak ke API Nawala
-    log("SYSTEM", f"Mengirim {len(semua_domain_target)} domain ke API...")
-    url = "https://api.nawala.link/public-check-domain"
-    headers = {
-        "X-Api-Key": NAWALA_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "domain": ",".join(semua_domain_target)
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=20)
-        res_json = response.json()
-        
-        if response.status_code == 429:
-            log("ERROR", f"Limit API Habis! Tersisa: {res_json.get('remaining', 0)}")
-            return log_buffer
-            
-        if not res_json.get("success"):
-            log("ERROR", f"API Error: {res_json}")
-            return log_buffer
-            
-    except Exception as e:
-        log("ERROR", f"Gagal menghubungi API Nawala: {e}")
-        return log_buffer
-
-    # 3. Proses Hasil JSON dari API
-    api_data = res_json.get("data", [])
-    blocked_domains = []
-    
-    for item in api_data:
-        dom = item.get("domain", "").lower().strip()
-        is_nawala = item.get("nawala", {}).get("blocked", False)
-        is_network = item.get("network", {}).get("blocked", False)
-        
-        # Jika salah satu sistem mendeteksi blokir, catat!
-        if is_nawala or is_network:
-            blocked_domains.append(dom)
-
-    # 4. Distribusi Hasil & Update KV
     ada_perubahan = False
     global_report = []
 
+    # Loop per Brand
     for target in TARGETS_IPOS:
-        log("INFO", f"Cek Brand: {target['name']}")
-        brand_domains = brand_map.get(target['name'], [])
-        active, removed = [], []
+        log("INFO", f"--- Memproses Brand: {target['name']} ---")
+        domains = get_kv(target['key'])
         
-        for d in brand_domains:
+        if not domains:
+            log("INFO", "Tidak ada domain. Skip.")
+            continue
+            
+        api_key = target.get("api_key", "")
+        blocked_domains = []
+        chunk_size = 5 # Jaga-jaga kalau domainnya nambah lebih dari 5
+        
+        for i in range(0, len(domains), chunk_size):
+            chunk = domains[i:i + chunk_size]
+            log("SYSTEM", f"Mengirim API Request untuk {len(chunk)} domain {target['name']}...")
+            
+            url = "https://api.nawala.link/public-check-domain"
+            headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
+            payload = {"domain": ",".join(chunk)}
+            
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=20)
+                res_json = response.json()
+                
+                if response.status_code == 429:
+                    log("ERROR", f"Limit API untuk {target['name']} Habis!")
+                    continue
+                    
+                if not res_json.get("success"):
+                    log("ERROR", f"API Error pada {target['name']}: {res_json}")
+                    continue
+                
+                # Baca Hasil
+                api_data = res_json.get("data", [])
+                for item in api_data:
+                    dom = item.get("domain", "").lower().strip()
+                    is_nawala = item.get("nawala", {}).get("blocked", False)
+                    is_network = item.get("network", {}).get("blocked", False)
+                    if is_nawala or is_network:
+                        blocked_domains.append(dom)
+                        
+            except Exception as e:
+                log("ERROR", f"Gagal menghubungi API untuk {target['name']}: {e}")
+                
+            time.sleep(1) # Jeda sopan santun 1 detik antar tembakan API
+            
+        # Pencatatan Status Per Brand
+        active, removed = [], []
+        for d in domains:
             d_l = d.lower().strip()
             if d_l in blocked_domains:
                 removed.append(d)
@@ -151,18 +134,19 @@ def run_api_check():
             else:
                 active.append(d)
                 log("SUCCESS", f"🟢 STATUS: AMAN ➜ {d}")
-
+                
         if removed:
             update_kv(target['key'], active)
             ada_perubahan = True
+            
         global_report.append({"name": target["name"], "active": active, "removed": removed})
 
-    # 5. Kirim Laporan ke Telegram
+    # Kirim ke Telegram kalau ada yang kena IPOS
     if ada_perubahan:
         log("INFO", "Mengirim laporan Telegram...")
         waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
         garis = "---------------------------------------"
-        msg = f"📅 Waktu: {waktu_str}\n🌐 Source: API Nawala.Asia\n\n"
+        msg = f"📅 Waktu: {waktu_str}\n🌐 Source: API Nawala.Asia (Multi-Key)\n\n"
         
         for r in global_report:
             msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
@@ -172,21 +156,18 @@ def run_api_check():
             
         send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
 
-    log("SUCCESS", "Pengecekan API Selesai!")
+    log("SUCCESS", "Pengecekan API Multi-Key Selesai!")
     return log_buffer
 
 # --- ENDPOINT API ---
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
-    # Jalankan langsung (tanpa background) karena API sudah super cepat!
     hasil_log = run_api_check()
-    
-    # Tampilkan log ala Hacker langsung di layar browser Bosku
     return Response(f"<pre style='background:#1e1e1e; color:#00ff00; padding:20px; font-family:monospace; font-size:14px; white-space:pre-wrap;'>{hasil_log}</pre>", mimetype='text/html')
 
 @app.route('/')
 def home():
-    return "Satpam Nawala (Versi API VVIP) Aktif! Akses /jalankan-patroli"
+    return "Satpam Nawala (Multi-API Mode) Aktif! Akses /jalankan-patroli"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
