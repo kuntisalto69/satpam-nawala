@@ -159,11 +159,27 @@ def run_api_check():
     log("SUCCESS", "Pengecekan API Multi-Key Selesai!")
     return log_buffer
 
-# --- ENDPOINT API ---
+# --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
 @app.route('/jalankan-patroli')
 def endpoint_patroli():
     hasil_log = run_api_check()
-    return Response(f"<pre style='background:#1e1e1e; color:#00ff00; padding:20px; font-family:monospace; font-size:14px; white-space:pre-wrap;'>{hasil_log}</pre>", mimetype='text/html')
+    
+    # Menambahkan Auto-Refresh setiap 1800 detik (30 Menit)
+    # Supaya server nggak tidur dan browser terus update otomatis
+    return Response(f"""
+    <html>
+        <head>
+            <meta http-equiv="refresh" content="1800">
+            <title>LIVE MONITORING - SATPAM NAWALA</title>
+        </head>
+        <body style="background:#1e1e1e; margin:0; padding:20px;">
+            <div style="color:#888; font-family:monospace; margin-bottom:10px;">
+                🔴 LIVE MONITORING ACTIVE | Auto-refresh: 30 Min
+            </div>
+            <pre style="color:#00ff00; font-family:monospace; font-size:14px; white-space:pre-wrap;">{hasil_log}</pre>
+        </body>
+    </html>
+    """, mimetype='text/html')
 
 @app.route('/')
 def home():
