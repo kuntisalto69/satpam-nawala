@@ -14,22 +14,31 @@ KV_NAMESPACE_ID = "7c6ae9f3416f4fdebd7f5a1ba437d917"
 TELEGRAM_TOKEN_IPOS = "8222594585:AAHTZNHgwUm6bTvpt5DieR-5vFks4rhKHjE"
 CHAT_ID_IPOS = "6117482148"
 
-# ⚠️ 3 API KEY DARI 3 AKUN BERBEDA ⚠️
+# ⚠️ SETUP VVIP: 3 BRAND DENGAN API CADANGAN (FAILOVER) ⚠️
 TARGETS_IPOS = [
     {
         "name": "CNNSLOT", 
         "key": "active_domains_cnn",
-        "api_key": "ls_796e4ae8c9836dbcc93e5a45c67e18e6285c3b55c50a3ebc" 
+        "api_keys": [
+            "ls_796e4ae8c9836dbcc93e5a45c67e18e6285c3b55c50a3ebc", # API 1 (Utama)
+            "ls_dc60f07366892ea3ee2407a891d7f1e7a82008e7b92bb2e2"  # API 4 (Cadangan)
+        ]
     },
     {
         "name": "RTP8000", 
         "key": "active_domains_rtp",
-        "api_key": "ls_b292d9ba81798d79a42ba5312b3653f04d1dbdb3a41f220b" 
+        "api_keys": [
+            "ls_b292d9ba81798d79a42ba5312b3653f04d1dbdb3a41f220b", # API 2 (Utama)
+            "ls_b7ac342740d2e7c434e7f589bbeae834f51b1634e1692b80"  # API 5 (Cadangan)
+        ]
     },
     {
         "name": "RUBY8000", 
         "key": "active_domains_ruby",
-        "api_key": "ls_4d9bae2ee5c8e27f58942145a421e289956d69d664e7f432" 
+        "api_keys": [
+            "ls_4d9bae2ee5c8e27f58942145a421e289956d69d664e7f432", # API 3 (Utama)
+            "ls_d853e6be788dc6ac388215849737d2bbaaa9ec00cc02ceaa"  # API 6 (Cadangan)
+        ]
     }
 ]
 
@@ -57,22 +66,20 @@ def update_kv(key_name, new_list):
 
 def send_and_pin(token, chat_id, message):
     try:
-        # Langsung tembak pesan ke Telegram
         r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": chat_id, "text": message, "disable_web_page_preview": "true"})
         if r.status_code == 200:
             new_msg_id = r.json().get('result', {}).get('message_id')
             if new_msg_id:
-                # Langsung Pin pesannya
                 requests.post(f"https://api.telegram.org/bot{token}/pinChatMessage", data={"chat_id": chat_id, "message_id": new_msg_id})
             return True
         return False
     except: return False
 
-# --- MESIN UTAMA (1 BRAND = 1 API DENGAN TRANSPARANSI KUOTA) ---
+# --- MESIN UTAMA (MULTI-KEY & AUTO FAILOVER) ---
 def run_api_check():
     global log_buffer
     log_buffer = "" 
-    log("SYSTEM", "Memulai pengecekan VVIP (1 Brand = 1 API Key)...")
+    log("SYSTEM", "Memulai pengecekan VVIP (Mode Auto-Cadangan API)...")
 
     ada_perubahan = False
     global_report = []
@@ -85,62 +92,68 @@ def run_api_check():
             log("INFO", "Tidak ada domain di KV. Skip.")
             continue
             
-        api_key = target.get("api_key", "")
+        api_keys = target.get("api_keys", [])
+        active_key_idx = 0 
         blocked_domains = []
         chunk_size = 5 
         
         for i in range(0, len(domains), chunk_size):
             chunk = domains[i:i + chunk_size]
-            log("SYSTEM", f"Mengirim API Request untuk {len(chunk)} domain {target['name']}...")
+            chunk_berhasil = False
             
-            url = "https://api.nawala.link/public-check-domain"
-            headers = {"X-Api-Key": api_key, "Content-Type": "application/json"}
-            payload = {"domain": ",".join(chunk)}
-            
-            try:
-                response = requests.post(url, headers=headers, json=payload, timeout=20)
-                res_json = response.json()
+            # LOOP FAILOVER: Terus tembak sampai berhasil atau semua API cadangan habis
+            while not chunk_berhasil and active_key_idx < len(api_keys):
+                current_api_key = api_keys[active_key_idx]
+                log("SYSTEM", f"Mengirim API Request ({len(chunk)} domain) via API Key ke-{active_key_idx + 1}...")
                 
-                # --- PENGAMBILAN DATA PEMAKAIAN API ---
-                # Kita ambil 'X-Ratelimit-Used' dari header, jika tidak ada pakai data dashboard Bosku
-                used = response.headers.get('X-Ratelimit-Used')
+                url = "https://api.nawala.link/public-check-domain"
+                headers = {"X-Api-Key": current_api_key, "Content-Type": "application/json"}
+                payload = {"domain": ",".join(chunk)}
                 
-                # Jika API tidak kasih header, kita pakai hitungan manual sederhana
-                if not used or used == "N/A":
-                    # Mencoba ambil dari sisa kuota (50 - remaining)
-                    rem = response.headers.get('X-Ratelimit-Remaining')
-                    if rem and rem.isdigit():
-                        used = 50 - int(rem)
-                    else:
-                        used = "Cek Dashboard" # Fallback jika benar-benar tidak terbaca
-
-                log("STATS", f"📊 Pemakaian API {target['name']}: {used}/50")
-                
-                if response.status_code == 429:
-                    log("ERROR", f"Limit API untuk {target['name']} HABIS TOTAL!")
-                    continue
+                try:
+                    response = requests.post(url, headers=headers, json=payload, timeout=20)
+                    res_json = response.json()
                     
-                if not res_json.get("success"):
-                    log("ERROR", f"API Error pada {target['name']}: {res_json}")
-                    continue
-                
-                api_data = res_json.get("data", [])
-                for item in api_data:
-                    dom = item.get("domain", "").lower().strip()
-                    is_nawala = item.get("nawala", {}).get("blocked", False)
-                    is_network = item.get("network", {}).get("blocked", False)
-                    if is_nawala or is_network:
-                        blocked_domains.append(dom)
+                    used = response.headers.get('X-Ratelimit-Used')
+                    if not used or used == "N/A":
+                        rem = response.headers.get('X-Ratelimit-Remaining')
+                        if rem and rem.isdigit(): used = 50 - int(rem)
+                        else: used = "Cek Dashboard"
+
+                    log("STATS", f"📊 Pemakaian API {target['name']} (Key {active_key_idx + 1}): {used}/50")
+                    
+                    # JIKA LIMIT HABIS, GANTI SENJATA!
+                    if response.status_code == 429:
+                        log("WARN", f"⚠️ Limit API ke-{active_key_idx + 1} HABIS TOTAL! Beralih ke API Cadangan...")
+                        active_key_idx += 1 
+                        time.sleep(2)
+                        continue 
                         
-            except Exception as e:
-                log("ERROR", f"Gagal menghubungi API untuk {target['name']}: {e}")
+                    if not res_json.get("success"):
+                        log("ERROR", f"API Error pada {target['name']}: {res_json}")
+                        break 
+                    
+                    # JIKA SUKSES
+                    chunk_berhasil = True
+                    api_data = res_json.get("data", [])
+                    for item in api_data:
+                        dom = item.get("domain", "").lower().strip()
+                        if item.get("nawala", {}).get("blocked") or item.get("network", {}).get("blocked"):
+                            blocked_domains.append(dom)
+                            
+                except Exception as e:
+                    log("ERROR", f"Gagal menghubungi API: {e}")
+                    break
+            
+            if not chunk_berhasil:
+                log("ERROR", f"🚨 SEMUA CADANGAN API {target['name']} HABIS! Melewati sisa domain brand ini.")
+                break 
                 
             time.sleep(1) 
             
         active, removed = [], []
         for d in domains:
-            d_l = d.lower().strip()
-            if d_l in blocked_domains:
+            if d.lower().strip() in blocked_domains:
                 removed.append(d)
                 log("WARN", f"🔴 STATUS: IPOS ➜ {d} [AUTO DELETE]")
             else:
@@ -154,11 +167,10 @@ def run_api_check():
         global_report.append({"name": target["name"], "active": active, "removed": removed})
 
     if ada_perubahan:
-        # ... (bagian kirim telegram tetap sama)
         log("INFO", "Mengirim laporan Telegram...")
         waktu_str = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime("%d/%m/%Y, %H:%M:%S WIB")
         garis = "---------------------------------------"
-        msg = f"📅 Waktu: {waktu_str}\n🌐 Source: API Nawala.Asia (Multi-Key)\n\n"
+        msg = f"📅 Waktu: {waktu_str}\n🌐 Source: Nawala (Auto-Failover Mode)\n\n"
         for r in global_report:
             msg += f"🍄 UPDATE LINK [{r['name']}]\n{garis}\n"
             for d in r['removed']: msg += f"🔴 {d} - IPOS\n"
@@ -166,58 +178,94 @@ def run_api_check():
             msg += f"{garis}\n"
         send_and_pin(TELEGRAM_TOKEN_IPOS, CHAT_ID_IPOS, msg)
 
-    log("SUCCESS", "Pengecekan API Multi-Key Selesai!")
+    log("SUCCESS", "Pengecekan VVIP Selesai!")
     return log_buffer
 
 # --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
-# Simpan waktu terakhir jalan di memori (biar gak jebol kuota)
 LAST_RUN_TIME = None
 
 @app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
 def endpoint_patroli():
-    # BIKIN ROBOT MENGABAIKAN KETUKAN 'HEAD'
     if request.method == 'HEAD':
         return Response("", status=200)
 
     global LAST_RUN_TIME
     sekarang = datetime.now()
 
-    # REM DARURAT: Jika dipanggil lagi dalam waktu kurang dari 20 menit, TOLAK!
-    if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 1200:
+    # REM DARURAT DIUBAH KE 800 DETIK (13.3 Menit) karena jadwal refresh sekarang 15 Menit
+    if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 800:
         return Response(f"""
         <html>
             <head><meta http-equiv="refresh" content="300"></head>
             <body style="background:#1e1e1e; color:#ff9900; font-family:monospace; padding:20px;">
                 ⚠️ SISTEM PENDING: Menghindari spam kuota. <br>
-                Patroli terakhir baru saja selesai. Tunggu jadwal berikutnya (30 Menit).
+                Patroli sedang dalam masa Cooldown. Tunggu jadwal berikutnya.
                 <br><br>
                 <a href="/jalankan-patroli" style="color:#00ff00;">Paksa Cek Sekarang (Gunakan Hati-hati)</a>
             </body>
         </html>
         """, mimetype='text/html')
 
-    # Jika aman, jalankan patroli
     LAST_RUN_TIME = sekarang
     hasil_log = run_api_check()
     
+    # TAMPILAN FUTURISTIK DENGAN PROGRESS BAR
     return Response(f"""
     <html>
         <head>
-            <meta http-equiv="refresh" content="1800">
-            <title>LIVE MONITORING - SATPAM NAWALA</title>
+            <meta http-equiv="refresh" content="900"> <title>LIVE MONITORING - SATPAM NAWALA</title>
+            <style>
+                body {{ background:#1e1e1e; color:#00ff00; font-family:monospace; margin:0; padding:20px; }}
+                .header-box {{ border-bottom: 1px dashed #444; padding-bottom: 15px; margin-bottom: 15px; }}
+                .title-bar {{ display: flex; justify-content: space-between; color: #888; font-size: 14px; margin-bottom: 10px; }}
+                .progress-bg {{ background: #333; width: 100%; height: 6px; border-radius: 3px; overflow: hidden; }}
+                .progress-fill {{ background: #00ff00; height: 100%; width: 0%; box-shadow: 0 0 10px #00ff00; transition: width 1s linear; }}
+                .timer {{ color: #00ff00; font-weight: bold; }}
+            </style>
         </head>
-        <body style="background:#1e1e1e; margin:0; padding:20px;">
-            <div style="color:#888; font-family:monospace; margin-bottom:10px;">
-                🔴 LIVE MONITORING ACTIVE | Auto-refresh: 30 Min
+        <body>
+            <div class="header-box">
+                <div class="title-bar">
+                    <div>🟢 LIVE MONITORING ACTIVE | Interval: 15 Menit</div>
+                    <div class="timer" id="countdown-text">Memuat...</div>
+                </div>
+                <div class="progress-bg">
+                    <div class="progress-fill" id="progress-bar"></div>
+                </div>
             </div>
+            
             <pre style="color:#00ff00; font-family:monospace; font-size:14px; white-space:pre-wrap;">{hasil_log}</pre>
+
+            <script>
+                // Animasi Hitung Mundur 15 Menit (900 detik)
+                let totalSeconds = 900; 
+                let timePassed = 0;
+                
+                setInterval(() => {{
+                    timePassed++;
+                    if (timePassed > totalSeconds) timePassed = totalSeconds;
+                    
+                    let timeLeft = totalSeconds - timePassed;
+                    let percentage = (timePassed / totalSeconds) * 100;
+                    
+                    // Update Lebar Bar Hijau
+                    document.getElementById('progress-bar').style.width = percentage + '%';
+                    
+                    // Update Teks Menit & Detik
+                    let m = Math.floor(timeLeft / 60);
+                    let s = timeLeft % 60;
+                    let s_display = s < 10 ? "0" + s : s;
+                    
+                    document.getElementById('countdown-text').innerText = "Patroli Berikutnya: " + m + ":" + s_display + " (" + percentage.toFixed(1) + "%)";
+                }}, 1000);
+            </script>
         </body>
     </html>
     """, mimetype='text/html')
 
 @app.route('/')
 def home():
-    return "Satpam Nawala (Multi-API Mode) Aktif! Akses /jalankan-patroli"
+    return "Satpam Nawala VVIP (Auto-Failover Mode) Aktif! Akses /jalankan-patroli"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
