@@ -14,30 +14,30 @@ KV_NAMESPACE_ID = "7c6ae9f3416f4fdebd7f5a1ba437d917"
 TELEGRAM_TOKEN_IPOS = "8222594585:AAHTZNHgwUm6bTvpt5DieR-5vFks4rhKHjE"
 CHAT_ID_IPOS = "6117482148"
 
-# ⚠️ SETUP VVIP: 3 BRAND DENGAN API CADANGAN (FAILOVER) ⚠️
+# ⚠️ SETUP VVIP: PENAMAAN API MURNI SESUAI URUTAN BOSKU ⚠️
 TARGETS_IPOS = [
     {
         "name": "CNNSLOT", 
         "key": "active_domains_cnn",
         "api_keys": [
-            "ls_796e4ae8c9836dbcc93e5a45c67e18e6285c3b55c50a3ebc", # API 1 (Utama)
-            "ls_dc60f07366892ea3ee2407a891d7f1e7a82008e7b92bb2e2"  # API 4 (Cadangan)
+            {"label": "API 1", "token": "ls_796e4ae8c9836dbcc93e5a45c67e18e6285c3b55c50a3ebc"},
+            {"label": "API 4", "token": "ls_dc60f07366892ea3ee2407a891d7f1e7a82008e7b92bb2e2"}
         ]
     },
     {
         "name": "RTP8000", 
         "key": "active_domains_rtp",
         "api_keys": [
-            "ls_b292d9ba81798d79a42ba5312b3653f04d1dbdb3a41f220b", # API 2 (Utama)
-            "ls_b7ac342740d2e7c434e7f589bbeae834f51b1634e1692b80"  # API 5 (Cadangan)
+            {"label": "API 2", "token": "ls_b292d9ba81798d79a42ba5312b3653f04d1dbdb3a41f220b"},
+            {"label": "API 5", "token": "ls_b7ac342740d2e7c434e7f589bbeae834f51b1634e1692b80"}
         ]
     },
     {
         "name": "RUBY8000", 
         "key": "active_domains_ruby",
         "api_keys": [
-            "ls_4d9bae2ee5c8e27f58942145a421e289956d69d664e7f432", # API 3 (Utama)
-            "ls_d853e6be788dc6ac388215849737d2bbaaa9ec00cc02ceaa"  # API 6 (Cadangan)
+            {"label": "API 3", "token": "ls_4d9bae2ee5c8e27f58942145a421e289956d69d664e7f432"},
+            {"label": "API 6", "token": "ls_d853e6be788dc6ac388215849737d2bbaaa9ec00cc02ceaa"}
         ]
     }
 ]
@@ -101,13 +101,17 @@ def run_api_check():
             chunk = domains[i:i + chunk_size]
             chunk_berhasil = False
             
-            # LOOP FAILOVER: Terus tembak sampai berhasil atau semua API cadangan habis
+            # LOOP FAILOVER
             while not chunk_berhasil and active_key_idx < len(api_keys):
-                current_api_key = api_keys[active_key_idx]
-                log("SYSTEM", f"Mengirim API Request ({len(chunk)} domain) via API Key ke-{active_key_idx + 1}...")
+                # Ekstrak Label (API 1, API 2, dst) dan Tokennya
+                current_api_data = api_keys[active_key_idx]
+                current_api_label = current_api_data["label"]
+                current_api_token = current_api_data["token"]
+                
+                log("SYSTEM", f"Mengirim API Request ({len(chunk)} domain) via {current_api_label}...")
                 
                 url = "https://api.nawala.link/public-check-domain"
-                headers = {"X-Api-Key": current_api_key, "Content-Type": "application/json"}
+                headers = {"X-Api-Key": current_api_token, "Content-Type": "application/json"}
                 payload = {"domain": ",".join(chunk)}
                 
                 try:
@@ -120,11 +124,10 @@ def run_api_check():
                         if rem and rem.isdigit(): used = 50 - int(rem)
                         else: used = "Cek Dashboard"
 
-                    log("STATS", f"📊 Pemakaian API {target['name']} (Key {active_key_idx + 1}): {used}/50")
+                    log("STATS", f"📊 Pemakaian API {target['name']} ({current_api_label}): {used}/50")
                     
-                    # JIKA LIMIT HABIS, GANTI SENJATA!
                     if response.status_code == 429:
-                        log("WARN", f"⚠️ Limit API ke-{active_key_idx + 1} HABIS TOTAL! Beralih ke API Cadangan...")
+                        log("WARN", f"⚠️ Limit {current_api_label} HABIS TOTAL! Beralih ke API Cadangan...")
                         active_key_idx += 1 
                         time.sleep(2)
                         continue 
@@ -133,7 +136,6 @@ def run_api_check():
                         log("ERROR", f"API Error pada {target['name']}: {res_json}")
                         break 
                     
-                    # JIKA SUKSES
                     chunk_berhasil = True
                     api_data = res_json.get("data", [])
                     for item in api_data:
@@ -182,9 +184,7 @@ def run_api_check():
     return log_buffer
 
 # --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
-# Simpan waktu terakhir jalan di memori
 LAST_RUN_TIME = None
-# Simpan layar hijau terakhir biar bisa ditampilin ulang kalau lagi Cooldown
 LAST_LOG_OUTPUT = "Sistem baru menyala. Memuat data patroli..."
 
 @app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
@@ -195,25 +195,20 @@ def endpoint_patroli():
     global LAST_RUN_TIME, LAST_LOG_OUTPUT
     sekarang = datetime.now()
 
-    # CEK COOLDOWN (800 detik / 13.3 menit)
+    # REM DARURAT (800 detik / 13.3 menit)
     if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 800:
-        # JIKA LAGI COOLDOWN: 
-        # Jangan tembak API, tapi JANGAN kasih layar jelek. 
-        # Kasih layar yang sama, dan hitung waktu yang udah berlalu!
         time_passed = int((sekarang - LAST_RUN_TIME).total_seconds())
         hasil_log = LAST_LOG_OUTPUT
         status_teks = "⚠️ PENDING (CEGAH SPAM KETUKAN GANDA)"
-        warna_status = "#ff9900" # Warna orange biar tau lagi nahan spam
+        warna_status = "#ff9900"
     else:
-        # JIKA AMAN: Jalankan patroli baru
         LAST_RUN_TIME = sekarang
-        LAST_LOG_OUTPUT = run_api_check() # Simpan hasil hijau-hijaunya
+        LAST_LOG_OUTPUT = run_api_check() 
         hasil_log = LAST_LOG_OUTPUT
         time_passed = 0
         status_teks = "🟢 LIVE MONITORING ACTIVE"
-        warna_status = "#00ff00" # Warna hijau
+        warna_status = "#00ff00"
 
-    # TAMPILAN FUTURISTIK (SELALU MUNCUL MESKI LAGI COOLDOWN)
     return Response(f"""
     <html>
         <head>
@@ -243,9 +238,8 @@ def endpoint_patroli():
             <pre style="color:#00ff00; font-family:monospace; font-size:14px; white-space:pre-wrap;">{hasil_log}</pre>
 
             <script>
-                // Animasi Hitung Mundur 15 Menit
                 let totalSeconds = 900; 
-                let timePassed = {time_passed}; // Lanjutin bar dari waktu yang tersisa
+                let timePassed = {time_passed}; 
                 
                 function updateTimer() {{
                     if (timePassed > totalSeconds) timePassed = totalSeconds;
@@ -253,10 +247,8 @@ def endpoint_patroli():
                     let timeLeft = totalSeconds - timePassed;
                     let percentage = (timePassed / totalSeconds) * 100;
                     
-                    // Update Lebar Bar Hijau
                     document.getElementById('progress-bar').style.width = percentage + '%';
                     
-                    // Update Teks Menit & Detik
                     let m = Math.floor(timeLeft / 60);
                     let s = timeLeft % 60;
                     let s_display = s < 10 ? "0" + s : s;
@@ -266,8 +258,8 @@ def endpoint_patroli():
                     timePassed++;
                 }}
                 
-                updateTimer(); // Jalan langsung pas buka web
-                setInterval(updateTimer, 1000); // Lanjut update per detik
+                updateTimer(); 
+                setInterval(updateTimer, 1000); 
             </script>
         </body>
     </html>
