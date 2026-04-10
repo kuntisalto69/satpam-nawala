@@ -14,7 +14,7 @@ KV_NAMESPACE_ID = "7c6ae9f3416f4fdebd7f5a1ba437d917"
 TELEGRAM_TOKEN_IPOS = "8222594585:AAHTZNHgwUm6bTvpt5DieR-5vFks4rhKHjE"
 CHAT_ID_IPOS = "6117482148"
 
-# ⚠️ SETUP VVIP: PENAMAAN API MURNI SESUAI URUTAN BOSKU ⚠️
+# ⚠️ SETUP VVIP: PENAMAAN API SESUAI KTP BOSKU ⚠️
 TARGETS_IPOS = [
     {
         "name": "CNNSLOT", 
@@ -103,7 +103,6 @@ def run_api_check():
             
             # LOOP FAILOVER
             while not chunk_berhasil and active_key_idx < len(api_keys):
-                # Ekstrak Label (API 1, API 2, dst) dan Tokennya
                 current_api_data = api_keys[active_key_idx]
                 current_api_label = current_api_data["label"]
                 current_api_token = current_api_data["token"]
@@ -186,7 +185,7 @@ def run_api_check():
 # --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
 LAST_RUN_TIME = None
 LAST_LOG_OUTPUT = "Sistem baru menyala. Memuat data patroli..."
-IS_RUNNING = False # 🔴 TAMBAHAN BARU: Tanda kalau robot lagi kerja
+IS_RUNNING = False # 🔴 KUNCI PINTU AGAR TABRAKAN DATA TIDAK TERJADI
 
 @app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
 def endpoint_patroli():
@@ -197,46 +196,48 @@ def endpoint_patroli():
     global LAST_RUN_TIME, LAST_LOG_OUTPUT, IS_RUNNING
     sekarang = datetime.now()
 
-    # 1. JIKA ROBOT SEDANG KERJA (Menangani Tabrakan Data)
+    # 1. JIKA ROBOT MASIH SIBUK KELILING (Menunggu 11 Detik)
     if IS_RUNNING:
         return Response("""
         <html>
             <head>
-                <meta http-equiv="refresh" content="4"> <title>MEMPROSES...</title>
+                <meta http-equiv="refresh" content="4">
+                <title>MEMPROSES...</title>
             </head>
             <body style="background:#1e1e1e; color:#00ff00; font-family:monospace; text-align:center; padding-top:100px;">
                 <h2>⚙️ ROBOT SEDANG KELILING PATROLI...</h2>
-                <p style="color:#888;">Mohon tunggu sekitar 10 detik. Layar akan otomatis memuat hasil.</p>
+                <p style="color:#888;">Mohon tunggu sekitar 10 detik. Layar akan otomatis memuat hasil log yang bersih.</p>
             </body>
         </html>
         """, mimetype='text/html')
 
-    # 2. JIKA SEDANG COOLDOWN (Robot Udah Selesai Kerja)
+    # 2. JIKA SEDANG COOLDOWN (Belum lewat 15 menit)
     if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 800:
         time_passed = int((sekarang - LAST_RUN_TIME).total_seconds())
         hasil_log = LAST_LOG_OUTPUT
-        status_teks = "⚠️ PENDING (CEGAH SPAM KETUKAN GANDA)"
+        status_teks = "⚠️ PENDING (CEGAH SPAM)"
         warna_status = "#ff9900"
         
-    # 3. JIKA WAKTUNYA KERJA (15 Menit Sudah Lewat)
+    # 3. JIKA WAKTUNYA PATROLI (Siklus Baru Dimulai)
     else:
-        IS_RUNNING = True # Kunci pintunya
+        IS_RUNNING = True # Kunci pintu
         try:
             LAST_RUN_TIME = sekarang
-            LAST_LOG_OUTPUT = run_api_check() # Suruh robot kerja (butuh 11 detik)
-            hasil_log = LAST_LOG_OUTPUT
+            hasil_cek_baru = run_api_check() # Suruh robot jalan
+            LAST_LOG_OUTPUT = hasil_cek_baru # Simpan log baru yang bersih
+            hasil_log = hasil_cek_baru
         finally:
-            IS_RUNNING = False # Buka lagi pintunya setelah beres
+            IS_RUNNING = False # Buka pintu
             
         time_passed = 0
         status_teks = "🟢 LIVE MONITORING ACTIVE"
         warna_status = "#00ff00"
 
-    # --- SISA KODE TAMPILAN FUTURISTIK TETAP SAMA ---
+    # TAMPILAN FUTURISTIK DASHBOARD
     return Response(f"""
     <html>
         <head>
-            <meta http-equiv="refresh" content="{{900 - time_passed if time_passed < 900 else 900}}">
+            <meta http-equiv="refresh" content="{900 - time_passed if time_passed < 900 else 900}">
             <title>LIVE MONITORING - SATPAM NAWALA</title>
             <style>
                 body {{ background:#1e1e1e; color:#00ff00; font-family:monospace; margin:0; padding:20px; }}
@@ -267,6 +268,7 @@ def endpoint_patroli():
                 
                 function updateTimer() {{
                     if (timePassed > totalSeconds) timePassed = totalSeconds;
+                    
                     let timeLeft = totalSeconds - timePassed;
                     let percentage = (timePassed / totalSeconds) * 100;
                     
