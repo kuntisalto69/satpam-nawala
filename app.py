@@ -189,8 +189,11 @@ LAST_LOG_OUTPUT = "Sistem baru menyala. Memuat data patroli..."
 
 @app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
 def endpoint_patroli():
-    if request.method == 'HEAD':
-        return Response("", status=200)
+    # BLOKIR KETUKAN 'HEAD' DAN 'PREFETCH' (HANTU BROWSER)
+    hantu_chrome = request.headers.get('Purpose') == 'prefetch' or request.headers.get('Sec-Fetch-Purpose') == 'prefetch'
+    
+    if request.method == 'HEAD' or hantu_chrome:
+        return Response("", status=200) # Cuekin hantunya tanpa memotong kuota atau nambah log berat
 
     global LAST_RUN_TIME, LAST_LOG_OUTPUT
     sekarang = datetime.now()
