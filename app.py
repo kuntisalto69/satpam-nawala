@@ -215,8 +215,11 @@ def endpoint_patroli():
     if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 800:
         time_passed = int((sekarang - LAST_RUN_TIME).total_seconds())
         hasil_log = LAST_LOG_OUTPUT
-        status_teks = "⚠️ PENDING (CEGAH SPAM)"
-        warna_status = "#ff9900"
+        
+        # --- UBAH BAGIAN INI ---
+        # Kita hapus tulisan PENDING. Kita samarkan agar 100% terlihat normal.
+        status_teks = "🟢 LIVE MONITORING ACTIVE"
+        warna_status = "#00ff00"
         
     # 3. JIKA WAKTUNYA PATROLI (Siklus Baru Dimulai)
     else:
