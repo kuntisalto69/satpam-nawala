@@ -182,38 +182,43 @@ def run_api_check():
     return log_buffer
 
 # --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
+# Simpan waktu terakhir jalan di memori
 LAST_RUN_TIME = None
+# Simpan layar hijau terakhir biar bisa ditampilin ulang kalau lagi Cooldown
+LAST_LOG_OUTPUT = "Sistem baru menyala. Memuat data patroli..."
 
 @app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
 def endpoint_patroli():
     if request.method == 'HEAD':
         return Response("", status=200)
 
-    global LAST_RUN_TIME
+    global LAST_RUN_TIME, LAST_LOG_OUTPUT
     sekarang = datetime.now()
 
-    # REM DARURAT DIUBAH KE 800 DETIK (13.3 Menit) karena jadwal refresh sekarang 15 Menit
+    # CEK COOLDOWN (800 detik / 13.3 menit)
     if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 800:
-        return Response(f"""
-        <html>
-            <head><meta http-equiv="refresh" content="300"></head>
-            <body style="background:#1e1e1e; color:#ff9900; font-family:monospace; padding:20px;">
-                ⚠️ SISTEM PENDING: Menghindari spam kuota. <br>
-                Patroli sedang dalam masa Cooldown. Tunggu jadwal berikutnya.
-                <br><br>
-                <a href="/jalankan-patroli" style="color:#00ff00;">Paksa Cek Sekarang (Gunakan Hati-hati)</a>
-            </body>
-        </html>
-        """, mimetype='text/html')
+        # JIKA LAGI COOLDOWN: 
+        # Jangan tembak API, tapi JANGAN kasih layar jelek. 
+        # Kasih layar yang sama, dan hitung waktu yang udah berlalu!
+        time_passed = int((sekarang - LAST_RUN_TIME).total_seconds())
+        hasil_log = LAST_LOG_OUTPUT
+        status_teks = "⚠️ PENDING (CEGAH SPAM KETUKAN GANDA)"
+        warna_status = "#ff9900" # Warna orange biar tau lagi nahan spam
+    else:
+        # JIKA AMAN: Jalankan patroli baru
+        LAST_RUN_TIME = sekarang
+        LAST_LOG_OUTPUT = run_api_check() # Simpan hasil hijau-hijaunya
+        hasil_log = LAST_LOG_OUTPUT
+        time_passed = 0
+        status_teks = "🟢 LIVE MONITORING ACTIVE"
+        warna_status = "#00ff00" # Warna hijau
 
-    LAST_RUN_TIME = sekarang
-    hasil_log = run_api_check()
-    
-    # TAMPILAN FUTURISTIK DENGAN PROGRESS BAR
+    # TAMPILAN FUTURISTIK (SELALU MUNCUL MESKI LAGI COOLDOWN)
     return Response(f"""
     <html>
         <head>
-            <meta http-equiv="refresh" content="900"> <title>LIVE MONITORING - SATPAM NAWALA</title>
+            <meta http-equiv="refresh" content="{900 - time_passed if time_passed < 900 else 900}">
+            <title>LIVE MONITORING - SATPAM NAWALA</title>
             <style>
                 body {{ background:#1e1e1e; color:#00ff00; font-family:monospace; margin:0; padding:20px; }}
                 .header-box {{ border-bottom: 1px dashed #444; padding-bottom: 15px; margin-bottom: 15px; }}
@@ -221,12 +226,13 @@ def endpoint_patroli():
                 .progress-bg {{ background: #333; width: 100%; height: 6px; border-radius: 3px; overflow: hidden; }}
                 .progress-fill {{ background: #00ff00; height: 100%; width: 0%; box-shadow: 0 0 10px #00ff00; transition: width 1s linear; }}
                 .timer {{ color: #00ff00; font-weight: bold; }}
+                .status-badge {{ color: {warna_status}; font-weight:bold; }}
             </style>
         </head>
         <body>
             <div class="header-box">
                 <div class="title-bar">
-                    <div>🟢 LIVE MONITORING ACTIVE | Interval: 15 Menit</div>
+                    <div class="status-badge">{status_teks} | Interval: 15 Menit</div>
                     <div class="timer" id="countdown-text">Memuat...</div>
                 </div>
                 <div class="progress-bg">
@@ -237,12 +243,11 @@ def endpoint_patroli():
             <pre style="color:#00ff00; font-family:monospace; font-size:14px; white-space:pre-wrap;">{hasil_log}</pre>
 
             <script>
-                // Animasi Hitung Mundur 15 Menit (900 detik)
+                // Animasi Hitung Mundur 15 Menit
                 let totalSeconds = 900; 
-                let timePassed = 0;
+                let timePassed = {time_passed}; // Lanjutin bar dari waktu yang tersisa
                 
-                setInterval(() => {{
-                    timePassed++;
+                function updateTimer() {{
                     if (timePassed > totalSeconds) timePassed = totalSeconds;
                     
                     let timeLeft = totalSeconds - timePassed;
@@ -257,7 +262,12 @@ def endpoint_patroli():
                     let s_display = s < 10 ? "0" + s : s;
                     
                     document.getElementById('countdown-text').innerText = "Patroli Berikutnya: " + m + ":" + s_display + " (" + percentage.toFixed(1) + "%)";
-                }}, 1000);
+                    
+                    timePassed++;
+                }}
+                
+                updateTimer(); // Jalan langsung pas buka web
+                setInterval(updateTimer, 1000); // Lanjut update per detik
             </script>
         </body>
     </html>
