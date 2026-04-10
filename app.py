@@ -186,36 +186,57 @@ def run_api_check():
 # --- ENDPOINT API DENGAN FITUR AUTO-LIVE ---
 LAST_RUN_TIME = None
 LAST_LOG_OUTPUT = "Sistem baru menyala. Memuat data patroli..."
+IS_RUNNING = False # 🔴 TAMBAHAN BARU: Tanda kalau robot lagi kerja
 
 @app.route('/jalankan-patroli', methods=['GET', 'HEAD'])
 def endpoint_patroli():
-    # BLOKIR KETUKAN 'HEAD' DAN 'PREFETCH' (HANTU BROWSER)
     hantu_chrome = request.headers.get('Purpose') == 'prefetch' or request.headers.get('Sec-Fetch-Purpose') == 'prefetch'
-    
     if request.method == 'HEAD' or hantu_chrome:
-        return Response("", status=200) # Cuekin hantunya tanpa memotong kuota atau nambah log berat
+        return Response("", status=200)
 
-    global LAST_RUN_TIME, LAST_LOG_OUTPUT
+    global LAST_RUN_TIME, LAST_LOG_OUTPUT, IS_RUNNING
     sekarang = datetime.now()
 
-    # REM DARURAT (800 detik / 13.3 menit)
+    # 1. JIKA ROBOT SEDANG KERJA (Menangani Tabrakan Data)
+    if IS_RUNNING:
+        return Response("""
+        <html>
+            <head>
+                <meta http-equiv="refresh" content="4"> <title>MEMPROSES...</title>
+            </head>
+            <body style="background:#1e1e1e; color:#00ff00; font-family:monospace; text-align:center; padding-top:100px;">
+                <h2>⚙️ ROBOT SEDANG KELILING PATROLI...</h2>
+                <p style="color:#888;">Mohon tunggu sekitar 10 detik. Layar akan otomatis memuat hasil.</p>
+            </body>
+        </html>
+        """, mimetype='text/html')
+
+    # 2. JIKA SEDANG COOLDOWN (Robot Udah Selesai Kerja)
     if LAST_RUN_TIME and (sekarang - LAST_RUN_TIME).total_seconds() < 800:
         time_passed = int((sekarang - LAST_RUN_TIME).total_seconds())
         hasil_log = LAST_LOG_OUTPUT
         status_teks = "⚠️ PENDING (CEGAH SPAM KETUKAN GANDA)"
         warna_status = "#ff9900"
+        
+    # 3. JIKA WAKTUNYA KERJA (15 Menit Sudah Lewat)
     else:
-        LAST_RUN_TIME = sekarang
-        LAST_LOG_OUTPUT = run_api_check() 
-        hasil_log = LAST_LOG_OUTPUT
+        IS_RUNNING = True # Kunci pintunya
+        try:
+            LAST_RUN_TIME = sekarang
+            LAST_LOG_OUTPUT = run_api_check() # Suruh robot kerja (butuh 11 detik)
+            hasil_log = LAST_LOG_OUTPUT
+        finally:
+            IS_RUNNING = False # Buka lagi pintunya setelah beres
+            
         time_passed = 0
         status_teks = "🟢 LIVE MONITORING ACTIVE"
         warna_status = "#00ff00"
 
+    # --- SISA KODE TAMPILAN FUTURISTIK TETAP SAMA ---
     return Response(f"""
     <html>
         <head>
-            <meta http-equiv="refresh" content="{900 - time_passed if time_passed < 900 else 900}">
+            <meta http-equiv="refresh" content="{{900 - time_passed if time_passed < 900 else 900}}">
             <title>LIVE MONITORING - SATPAM NAWALA</title>
             <style>
                 body {{ background:#1e1e1e; color:#00ff00; font-family:monospace; margin:0; padding:20px; }}
@@ -246,7 +267,6 @@ def endpoint_patroli():
                 
                 function updateTimer() {{
                     if (timePassed > totalSeconds) timePassed = totalSeconds;
-                    
                     let timeLeft = totalSeconds - timePassed;
                     let percentage = (timePassed / totalSeconds) * 100;
                     
